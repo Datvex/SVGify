@@ -43,8 +43,7 @@ The result depends on:
 - Lighting
 - Compression artifacts
 - Camera angle and perspective
-- Shadows
-- Reflections
+- Shadows and reflections
 - Background complexity
 - Original logo complexity
 
@@ -58,7 +57,7 @@ For the best result, use a high-resolution image with sharp edges, even lighting
 
 ## Installation
 
-Download or clone the project, open its directory, and create a virtual environment.
+Clone the repository or download its files, open the project directory, and create a virtual environment.
 
 ### Windows
 
@@ -95,10 +94,10 @@ brew install cairo libffi
 
 ## Interactive mode
 
-Run SVGify without arguments:
+Run `SVGify.py` without arguments:
 
 ```bash
-python svgify.py
+python SVGify.py
 ```
 
 The interactive menu lets you configure:
@@ -116,55 +115,55 @@ Paths can be entered manually or dragged into a compatible terminal window.
 Convert one image:
 
 ```bash
-python svgify.py logo.png
+python SVGify.py logo.png
 ```
 
 Convert multiple files:
 
 ```bash
-python svgify.py logo.png brand.jpg icon.webp
+python SVGify.py logo.png brand.jpg icon.webp
 ```
 
 Process a folder recursively:
 
 ```bash
-python svgify.py ./logos
+python SVGify.py ./logos
 ```
 
 Process a ZIP archive:
 
 ```bash
-python svgify.py logos.zip
+python SVGify.py logos.zip
 ```
 
 Choose an output directory:
 
 ```bash
-python svgify.py logo.png --output ./svg
+python SVGify.py logo.png --output ./svg
 ```
 
 Configure vectorization:
 
 ```bash
-python svgify.py logo.png --colors 16 --detail 85 --background auto
+python SVGify.py logo.png --colors 16 --detail 85 --background auto
 ```
 
 Disable denoising:
 
 ```bash
-python svgify.py logo.png --no-denoise
+python SVGify.py logo.png --no-denoise
 ```
 
 Process large images at a higher internal resolution:
 
 ```bash
-python svgify.py logo.png --max-size 4000
+python SVGify.py logo.png --max-size 4000
 ```
 
 Remove smaller contour fragments:
 
 ```bash
-python svgify.py logo.png --min-area 12
+python SVGify.py logo.png --min-area 12
 ```
 
 ## Command-line options
@@ -187,7 +186,7 @@ inputs                  Files, folders, or ZIP archives
 Removes the background only when needed. Transparent images normally keep their existing alpha channel.
 
 ```bash
-python svgify.py logo.png --background auto
+python SVGify.py logo.png --background auto
 ```
 
 ### `on`
@@ -195,7 +194,7 @@ python svgify.py logo.png --background auto
 Always attempts to remove the background.
 
 ```bash
-python svgify.py photo.jpg --background on
+python SVGify.py photo.jpg --background on
 ```
 
 ### `off`
@@ -203,7 +202,7 @@ python svgify.py photo.jpg --background on
 Preserves the original background.
 
 ```bash
-python svgify.py image.png --background off
+python SVGify.py image.png --background off
 ```
 
 ## Recommended settings
@@ -211,25 +210,25 @@ python svgify.py image.png --background off
 ### Simple flat logo
 
 ```bash
-python svgify.py logo.png --colors 6 --detail 80 --background auto
+python SVGify.py logo.png --colors 6 --detail 80 --background auto
 ```
 
 ### Detailed multicolor logo
 
 ```bash
-python svgify.py logo.png --colors 24 --detail 90 --background auto
+python SVGify.py logo.png --colors 24 --detail 90 --background auto
 ```
 
 ### Logo on a complex photograph
 
 ```bash
-python svgify.py photo.jpg --colors 16 --detail 85 --background on
+python SVGify.py photo.jpg --colors 16 --detail 85 --background on
 ```
 
 ### Cleaner and smaller SVG
 
 ```bash
-python svgify.py logo.png --colors 8 --detail 60 --min-area 15
+python SVGify.py logo.png --colors 8 --detail 60 --min-area 15
 ```
 
 ## Output
@@ -301,7 +300,7 @@ pip install --upgrade rembg onnxruntime
 Reduce contour detail or increase the minimum contour area:
 
 ```bash
-python svgify.py logo.png --detail 60 --min-area 15
+python SVGify.py logo.png --detail 60 --min-area 15
 ```
 
 ### The output colors look too simplified
@@ -309,7 +308,7 @@ python svgify.py logo.png --detail 60 --min-area 15
 Increase the number of colors:
 
 ```bash
-python svgify.py logo.png --colors 24
+python SVGify.py logo.png --colors 24
 ```
 
 ### Processing is slow
@@ -317,9 +316,11 @@ python svgify.py logo.png --colors 24
 Reduce the internal image size:
 
 ```bash
-python svgify.py logo.png --max-size 1600
+python SVGify.py logo.png --max-size 1600
 ```
 
 ## License
 
-MIT
+SVGify is distributed under the **GNU General Public License v3.0**.
+
+See the [LICENSE](LICENSE) file for the complete license text.
