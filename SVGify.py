@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+import math
 import time
 import atexit
 import shutil
@@ -11,17 +12,20 @@ import urllib.parse
 import unicodedata
 import textwrap
 from pathlib import Path
-from xml.sax.saxutils import escape
+from collections import deque
 
-import numpy as np
-import cv2
-from PIL import Image, ImageOps
+from PIL import Image, ImageOps, ImageFilter
 
 try:
     from pillow_heif import register_heif_opener
     register_heif_opener()
 except Exception:
     pass
+
+try:
+    import vtracer
+except Exception:
+    vtracer = None
 
 C_BLUE = "\033[38;2;0;175;255m"
 C_YELLOW = "\033[38;2;248;246;117m"
@@ -33,18 +37,6 @@ C_RED = "\033[38;2;255;100;100m"
 C_BOLD = "\033[1m"
 C_RESET = "\033[0m"
 C_BG_INPUT = "\033[48;2;45;45;45m"
-
-COLOR_NORMAL = {
-    "blue": "\033[38;2;0;175;255m",
-    "yellow": "\033[38;2;248;246;117m",
-    "gray": "\033[38;2;110;110;110m",
-    "white": "\033[38;2;210;210;210m",
-    "dark_gray": "\033[38;2;80;80;80m",
-    "green": "\033[38;2;90;220;140m",
-    "red": "\033[38;2;255;100;100m",
-    "bold": "\033[1m",
-    "bg_input": "\033[48;2;45;45;45m"
-}
 
 SUPPORTED_EXTS = {
     ".png", ".jpg", ".jpeg", ".jfif", ".webp", ".bmp", ".dib", ".gif",
@@ -75,14 +67,14 @@ T = {
         "settings": "Settings",
         "system": "System",
         "output_path": "Output path",
-        "colors": "Colors",
+        "colors": "Color level",
         "detail": "Detail",
         "background": "Background removal",
         "language": "Language",
         "tip_main": "Type a number to select, or Ctrl+C to exit",
         "action": "Action:",
         "input": "Input",
-        "input_help": "Enter paths to images, PDFs, SVG files, ZIP archives or folders.",
+        "input_help": "Enter paths to images, PDF files, SVG files, ZIP archives or folders.",
         "path": "Path:",
         "not_found": "No supported files found.",
         "processing": "Vectorizing",
@@ -92,16 +84,19 @@ T = {
         "failed": "Failed",
         "press_enter": "Press Enter to return",
         "change_path": "Change output path",
-        "change_colors": "Change number of colors",
+        "change_colors": "Change color level",
         "change_detail": "Change contour detail",
         "change_background": "Change background removal",
         "change_language": "Change language",
         "new_path": "New path:",
-        "new_colors": "Colors from 2 to 64:",
+        "new_colors": "Color level from 2 to 64:",
         "new_detail": "Detail from 1 to 100:",
         "auto": "Auto",
         "on": "Enabled",
-        "off": "Disabled"
+        "off": "Disabled",
+        "back": "Back",
+        "exit": "Exit",
+        "missing_vtracer": "VTracer is not installed. Run: python -m pip install -r requirements.txt"
     },
     "ru": {
         "commands": "Команды",
@@ -110,7 +105,7 @@ T = {
         "settings": "Настройки",
         "system": "Система",
         "output_path": "Путь сохранения",
-        "colors": "Количество цветов",
+        "colors": "Уровень цветов",
         "detail": "Детализация",
         "background": "Удаление фона",
         "language": "Язык",
@@ -127,16 +122,19 @@ T = {
         "failed": "Ошибка",
         "press_enter": "Нажмите Enter для возврата",
         "change_path": "Изменить путь сохранения",
-        "change_colors": "Изменить количество цветов",
+        "change_colors": "Изменить уровень цветов",
         "change_detail": "Изменить детализацию контуров",
         "change_background": "Изменить удаление фона",
         "change_language": "Изменить язык",
         "new_path": "Новый путь:",
-        "new_colors": "Количество цветов от 2 до 64:",
+        "new_colors": "Уровень цветов от 2 до 64:",
         "new_detail": "Детализация от 1 до 100:",
         "auto": "Авто",
         "on": "Включено",
-        "off": "Отключено"
+        "off": "Отключено",
+        "back": "Назад",
+        "exit": "Выход",
+        "missing_vtracer": "VTracer не установлен. Выполните: python -m pip install -r requirements.txt"
     },
     "zh": {
         "commands": "命令",
@@ -145,7 +143,7 @@ T = {
         "settings": "设置",
         "system": "系统",
         "output_path": "输出路径",
-        "colors": "颜色数量",
+        "colors": "颜色级别",
         "detail": "细节",
         "background": "背景移除",
         "language": "语言",
@@ -162,16 +160,19 @@ T = {
         "failed": "错误",
         "press_enter": "按 Enter 返回",
         "change_path": "更改输出路径",
-        "change_colors": "更改颜色数量",
+        "change_colors": "更改颜色级别",
         "change_detail": "更改轮廓细节",
         "change_background": "更改背景移除",
         "change_language": "更改语言",
         "new_path": "新路径:",
-        "new_colors": "颜色数量 2 到 64:",
+        "new_colors": "颜色级别 2 到 64:",
         "new_detail": "细节 1 到 100:",
         "auto": "自动",
         "on": "启用",
-        "off": "禁用"
+        "off": "禁用",
+        "back": "返回",
+        "exit": "退出",
+        "missing_vtracer": "未安装 VTracer。运行: python -m pip install -r requirements.txt"
     }
 }
 
@@ -209,20 +210,28 @@ def text_width(text):
 
 def truncate_text(text, max_len):
     text = str(text)
+
     if max_len <= 0:
         return ""
+
     if text_width(text) <= max_len:
         return text
+
     if max_len <= 3:
         return "." * max_len
+
     result = ""
     width = 0
+
     for ch in text:
-        cw = char_width(ch)
-        if width + cw > max_len - 3:
+        current = char_width(ch)
+
+        if width + current > max_len - 3:
             break
+
         result += ch
-        width += cw
+        width += current
+
     return result + "..."
 
 
@@ -234,20 +243,24 @@ def get_term_width():
 
 
 def get_layout():
-    tw = get_term_width()
-    bw = max(20, min(tw - 4, 76))
-    return tw, bw, " " * max(0, (tw - bw) // 2)
+    terminal_width = get_term_width()
+    block_width = max(20, min(terminal_width - 4, 76))
+    margin = " " * max(0, (terminal_width - block_width) // 2)
+    return terminal_width, block_width, margin
 
 
 def clear_screen(lines=18):
     sys.stdout.write(f"{C_RESET}\033[2J\033[H")
+
     try:
-        th = os.get_terminal_size().lines
-        padding = max(0, (th - lines) // 2)
+        terminal_height = os.get_terminal_size().lines
+        padding = max(0, (terminal_height - lines) // 2)
+
         if padding:
             sys.stdout.write("\n" * padding)
     except OSError:
         pass
+
     sys.stdout.flush()
 
 
@@ -258,6 +271,7 @@ def print_wrapped_text(text, margin, width, color=C_GRAY):
         break_long_words=False,
         break_on_hyphens=False
     )
+
     for line in lines or [""]:
         print(f"{margin}{color}{line}{C_RESET}")
 
@@ -270,11 +284,14 @@ def draw_logo():
         "     ██   ████   ██    ██ ██ ██         ██   ",
         "███████    ██     ██████  ██ ██         ██   "
     ]
-    tw = get_term_width()
+
+    terminal_width = get_term_width()
     print()
+
     for line in logo:
-        margin = " " * max(0, (tw - len(line)) // 2)
+        margin = " " * max(0, (terminal_width - len(line)) // 2)
         print(f"{margin}{C_YELLOW}{line}{C_RESET}")
+
     print()
 
 
@@ -288,9 +305,9 @@ def draw_menu_item(margin, number, text):
 
 
 def draw_sys_item(margin, width, label, value):
-    left = f"{label}   "
-    shown = truncate_text(value, max(1, width - text_width(left)))
-    print(f"{margin}{C_WHITE}{left}{C_RESET}{C_GRAY}{shown}{C_RESET}")
+    prefix = f"{label}   "
+    displayed = truncate_text(value, max(1, width - text_width(prefix)))
+    print(f"{margin}{C_WHITE}{prefix}{C_RESET}{C_GRAY}{displayed}{C_RESET}")
 
 
 def print_tip(text, margin, width):
@@ -300,101 +317,22 @@ def print_tip(text, margin, width):
         break_long_words=False,
         break_on_hyphens=False
     )
+
     if lines:
         print(f"\n{margin}{C_YELLOW}● Tip{C_RESET} {C_GRAY}{lines[0]}{C_RESET}")
+
         for line in lines[1:]:
             print(f"{margin}      {C_GRAY}{line}{C_RESET}")
+
     print()
-
-
-def clean_path(path):
-    if not path:
-        return ""
-    path = str(path).strip(" \r\n\t")
-    if len(path) >= 2 and path[0] == path[-1] and path[0] in ("'", '"'):
-        path = path[1:-1]
-    if path.startswith("file://"):
-        path = urllib.parse.unquote(path[7:])
-        if sys.platform == "win32" and path.startswith("/") and len(path) > 2 and path[2] == ":":
-            path = path[1:]
-    return os.path.normpath(os.path.expanduser(path))
-
-
-def split_paths(raw):
-    raw = raw.strip()
-    direct = clean_path(raw)
-    if os.path.exists(direct):
-        return [direct]
-    try:
-        import shlex
-        tokens = shlex.split(raw, posix=os.name != "nt")
-    except Exception:
-        tokens = raw.split()
-    result = []
-    index = 0
-    while index < len(tokens):
-        found = None
-        found_index = index
-        for end in range(index, len(tokens)):
-            candidate = clean_path(" ".join(tokens[index:end + 1]))
-            if os.path.exists(candidate):
-                found = candidate
-                found_index = end
-        if found:
-            result.append(found)
-            index = found_index + 1
-        else:
-            index += 1
-    return result
-
-
-def get_default_output():
-    if sys.platform == "win32":
-        return os.path.join(os.environ.get("USERPROFILE", str(Path.home())), "Downloads", "SVGify")
-    if "ANDROID_ROOT" in os.environ:
-        return "/storage/emulated/0/Download/SVGify"
-    return os.path.join(str(Path.home()), "Downloads", "SVGify")
-
-
-def default_config():
-    return {
-        "lang": "ru",
-        "output": get_default_output(),
-        "colors": 12,
-        "detail": 70,
-        "background": "auto",
-        "max_size": 2400,
-        "min_area": 6,
-        "denoise": 1
-    }
-
-
-def load_config():
-    config = default_config()
-    try:
-        if MEMORY_FILE.exists():
-            with open(MEMORY_FILE, "r", encoding="utf-8") as file:
-                saved = json.load(file)
-                if isinstance(saved, dict):
-                    config.update(saved)
-    except Exception:
-        pass
-    if config["lang"] not in T:
-        config["lang"] = "ru"
-    return config
-
-
-def save_config(config):
-    try:
-        with open(MEMORY_FILE, "w", encoding="utf-8") as file:
-            json.dump(config, file, ensure_ascii=False, indent=4)
-    except Exception:
-        pass
 
 
 def ask(prompt):
     try:
-        return input(f"{C_BLUE}▌{C_BG_INPUT}{C_GRAY} {prompt} {C_RESET}{C_WHITE}").strip()
+        return input(
+            f"{C_BLUE}▌{C_BG_INPUT}{C_GRAY} {prompt} "
+            f"{C_RESET}{C_WHITE}"
+        ).strip()
     finally:
         sys.stdout.write(C_RESET)
 
@@ -415,26 +353,147 @@ def show_message(lang, title, message, color=C_YELLOW):
     wait_return(T[lang]["press_enter"])
 
 
+def clean_path(path):
+    if not path:
+        return ""
+
+    path = str(path).strip(" \r\n\t")
+
+    if len(path) >= 2 and path[0] == path[-1] and path[0] in ("'", '"'):
+        path = path[1:-1]
+
+    if path.startswith("file://"):
+        path = urllib.parse.unquote(path[7:])
+
+        if (
+            sys.platform == "win32"
+            and path.startswith("/")
+            and len(path) > 2
+            and path[2] == ":"
+        ):
+            path = path[1:]
+
+    return os.path.normpath(os.path.expanduser(path))
+
+
+def split_paths(raw):
+    raw = raw.strip()
+    direct = clean_path(raw)
+
+    if os.path.exists(direct):
+        return [direct]
+
+    try:
+        import shlex
+        tokens = shlex.split(raw, posix=os.name != "nt")
+    except Exception:
+        tokens = raw.split()
+
+    result = []
+    index = 0
+
+    while index < len(tokens):
+        found = None
+        found_index = index
+
+        for end in range(index, len(tokens)):
+            candidate = clean_path(" ".join(tokens[index:end + 1]))
+
+            if os.path.exists(candidate):
+                found = candidate
+                found_index = end
+
+        if found:
+            result.append(found)
+            index = found_index + 1
+        else:
+            index += 1
+
+    return result
+
+
+def get_default_output():
+    if sys.platform == "win32":
+        home = os.environ.get("USERPROFILE", str(Path.home()))
+        return os.path.join(home, "Downloads", "SVGify")
+
+    if "ANDROID_ROOT" in os.environ:
+        return "/storage/emulated/0/Download/SVGify"
+
+    return os.path.join(str(Path.home()), "Downloads", "SVGify")
+
+
+def default_config():
+    return {
+        "lang": "ru",
+        "output": get_default_output(),
+        "colors": 16,
+        "detail": 75,
+        "background": "auto",
+        "max_size": 2400,
+        "min_area": 6,
+        "background_tolerance": 34
+    }
+
+
+def load_config():
+    config = default_config()
+
+    try:
+        if MEMORY_FILE.exists():
+            with open(MEMORY_FILE, "r", encoding="utf-8") as file:
+                saved = json.load(file)
+
+                if isinstance(saved, dict):
+                    config.update(saved)
+    except Exception:
+        pass
+
+    if config["lang"] not in T:
+        config["lang"] = "ru"
+
+    return config
+
+
+def save_config(config):
+    try:
+        with open(MEMORY_FILE, "w", encoding="utf-8") as file:
+            json.dump(config, file, ensure_ascii=False, indent=4)
+    except Exception:
+        pass
+
+
 def unique_output_path(path):
     path = Path(path)
+
     if not path.exists():
         return str(path)
+
     index = 2
+
     while True:
         candidate = path.with_name(f"{path.stem}_{index}{path.suffix}")
+
         if not candidate.exists():
             return str(candidate)
+
         index += 1
 
 
 def safe_extract_zip(path, destination):
     root = os.path.abspath(destination)
+
     with zipfile.ZipFile(path, "r") as archive:
         for member in archive.infolist():
             target = os.path.abspath(os.path.join(root, member.filename))
-            if os.path.commonpath([root, target]) != root:
-                continue
-            archive.extract(member, root)
+
+            try:
+                safe = os.path.commonpath([root, target]) == root
+            except ValueError:
+                safe = False
+
+            if safe:
+                archive.extract(member, root)
 
 
 def collect_inputs(paths):
@@ -444,37 +503,49 @@ def collect_inputs(paths):
 
     def add_file(path):
         absolute = os.path.abspath(path)
+
         if absolute in seen:
             return
-        extension = Path(absolute).suffix.lower()
-        if extension in SUPPORTED_EXTS:
+
+        if Path(absolute).suffix.lower() in SUPPORTED_EXTS:
             seen.add(absolute)
             files.append(absolute)
 
     def walk(path):
         if os.path.isdir(path):
-            for root, dirs, names in os.walk(path):
-                dirs[:] = [name for name in sorted(dirs) if name not in IGNORE_DIRS]
+            for root, directories, names in os.walk(path):
+                directories[:] = [
+                    name
+                    for name in sorted(directories)
+                    if name not in IGNORE_DIRS
+                ]
+
                 for name in sorted(names):
                     child = os.path.join(root, name)
                     extension = Path(child).suffix.lower()
+
                     if extension in ARCHIVE_EXTS:
-                        temp_dir = tempfile.mkdtemp(prefix="svgify_")
-                        temporary.append(temp_dir)
+                        temporary_directory = tempfile.mkdtemp(
+                            prefix="svgify_"
+                        )
+                        temporary.append(temporary_directory)
+
                         try:
-                            safe_extract_zip(child, temp_dir)
-                            walk(temp_dir)
+                            safe_extract_zip(child, temporary_directory)
+                            walk(temporary_directory)
                         except Exception:
                             pass
                     else:
                         add_file(child)
+
         elif os.path.isfile(path):
             extension = Path(path).suffix.lower()
+
             if extension in ARCHIVE_EXTS:
-                temp_dir = tempfile.mkdtemp(prefix="svgify_")
-                temporary.append(temp_dir)
-                safe_extract_zip(path, temp_dir)
-                walk(temp_dir)
+                temporary_directory = tempfile.mkdtemp(prefix="svgify_")
+                temporary.append(temporary_directory)
+                safe_extract_zip(path, temporary_directory)
+                walk(temporary_directory)
             else:
                 add_file(path)
 
@@ -487,8 +558,9 @@ def collect_inputs(paths):
 def load_raw(path):
     try:
         import rawpy
-    except Exception as exc:
-        raise RuntimeError("RAW support requires rawpy") from exc
+    except Exception as error:
+        raise RuntimeError("RAW support requires rawpy") from error
+
     with rawpy.imread(path) as raw:
         rgb = raw.postprocess(
             use_camera_wb=True,
@@ -496,405 +568,302 @@ def load_raw(path):
             output_bps=8,
             gamma=(2.222, 4.5)
         )
+
     return Image.fromarray(rgb, "RGB").convert("RGBA")
 
 
 def load_pdf(path):
     try:
         import fitz
-    except Exception as exc:
-        raise RuntimeError("PDF support requires pymupdf") from exc
+    except Exception as error:
+        raise RuntimeError("PDF support requires PyMuPDF") from error
+
     document = fitz.open(path)
-    if document.page_count < 1:
-        document.close()
-        raise RuntimeError("PDF has no pages")
-    page = document.load_page(0)
-    matrix = fitz.Matrix(3.0, 3.0)
-    pixmap = page.get_pixmap(matrix=matrix, alpha=True)
-    mode = "RGBA" if pixmap.alpha else "RGB"
-    image = Image.frombytes(mode, (pixmap.width, pixmap.height), pixmap.samples)
-    document.close()
-    return image.convert("RGBA")
 
-
-def load_svg_preview(path):
     try:
-        import cairosvg
-    except Exception as exc:
-        raise RuntimeError("SVG raster preview requires cairosvg") from exc
-    data = cairosvg.svg2png(url=path, output_width=2400, output_height=2400)
-    from io import BytesIO
-    return Image.open(BytesIO(data)).convert("RGBA")
+        if document.page_count < 1:
+            raise RuntimeError("PDF has no pages")
+
+        page = document.load_page(0)
+        pixmap = page.get_pixmap(matrix=fitz.Matrix(3.0, 3.0), alpha=True)
+        mode = "RGBA" if pixmap.alpha else "RGB"
+
+        return Image.frombytes(
+            mode,
+            (pixmap.width, pixmap.height),
+            pixmap.samples
+        ).convert("RGBA")
+    finally:
+        document.close()
 
 
 def load_image(path):
     extension = Path(path).suffix.lower()
+
     if extension in RAW_EXTS:
-        image = load_raw(path)
-    elif extension == ".pdf":
-        image = load_pdf(path)
-    elif extension == ".svg":
-        image = load_svg_preview(path)
-    else:
-        with Image.open(path) as source:
-            try:
-                source.seek(0)
-            except Exception:
-                pass
-            image = ImageOps.exif_transpose(source).convert("RGBA")
-    return image
+        return load_raw(path)
+
+    if extension == ".pdf":
+        return load_pdf(path)
+
+    with Image.open(path) as source:
+        try:
+            source.seek(0)
+        except Exception:
+            pass
+
+        return ImageOps.exif_transpose(source).convert("RGBA")
 
 
 def resize_for_processing(image, max_size):
     width, height = image.size
     longest = max(width, height)
+
     if longest <= max_size:
-        return image, width, height
+        return image
+
     ratio = max_size / float(longest)
-    resized = image.resize(
-        (max(1, round(width * ratio)), max(1, round(height * ratio))),
-        Image.Resampling.LANCZOS
-    )
-    return resized, width, height
-
-
-def remove_background_rembg(rgba):
-    try:
-        from rembg import remove
-    except Exception:
-        return None
-    try:
-        image = Image.fromarray(rgba, "RGBA")
-        result = remove(image, alpha_matting=True)
-        return np.array(result.convert("RGBA"), dtype=np.uint8)
-    except Exception:
-        return None
-
-
-def border_pixels(rgb):
-    height, width = rgb.shape[:2]
-    border = max(1, min(height, width) // 50)
-    return np.concatenate([
-        rgb[:border].reshape(-1, 3),
-        rgb[-border:].reshape(-1, 3),
-        rgb[:, :border].reshape(-1, 3),
-        rgb[:, -border:].reshape(-1, 3)
-    ], axis=0)
-
-
-def automatic_background_mask(rgb):
-    height, width = rgb.shape[:2]
-    lab = cv2.cvtColor(rgb, cv2.COLOR_RGB2LAB).astype(np.float32)
-    samples = border_pixels(rgb)
-    sample_lab = cv2.cvtColor(
-        samples.reshape(-1, 1, 3),
-        cv2.COLOR_RGB2LAB
-    ).reshape(-1, 3).astype(np.float32)
-    center = np.median(sample_lab, axis=0)
-    spread = np.median(np.linalg.norm(sample_lab - center, axis=1))
-    threshold = float(np.clip(spread * 2.8 + 10.0, 14.0, 48.0))
-    distance = np.linalg.norm(lab - center, axis=2)
-    candidate = (distance <= threshold).astype(np.uint8)
-    flood_source = np.pad(candidate, 1, mode="constant")
-    flood = np.zeros_like(flood_source, dtype=np.uint8)
-    queue = []
-
-    for x in range(1, width + 1):
-        if flood_source[1, x]:
-            queue.append((1, x))
-        if flood_source[height, x]:
-            queue.append((height, x))
-
-    for y in range(1, height + 1):
-        if flood_source[y, 1]:
-            queue.append((y, 1))
-        if flood_source[y, width]:
-            queue.append((y, width))
-
-    from collections import deque
-    queue = deque(queue)
-
-    while queue:
-        y, x = queue.popleft()
-        if flood[y, x] or not flood_source[y, x]:
-            continue
-        flood[y, x] = 1
-        queue.append((y - 1, x))
-        queue.append((y + 1, x))
-        queue.append((y, x - 1))
-        queue.append((y, x + 1))
-
-    background = flood[1:-1, 1:-1]
-    foreground = (1 - background) * 255
-    kernel = np.ones((3, 3), np.uint8)
-    foreground = cv2.morphologyEx(foreground, cv2.MORPH_CLOSE, kernel)
-    foreground = cv2.GaussianBlur(foreground, (3, 3), 0)
-    return foreground
-
-
-def prepare_rgba(image, background_mode, denoise):
-    rgba = np.array(image.convert("RGBA"), dtype=np.uint8)
-    rgb = rgba[:, :, :3]
-    alpha = rgba[:, :, 3]
-
-    if denoise:
-        rgb = cv2.fastNlMeansDenoisingColored(
-            cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR),
-            None,
-            4,
-            4,
-            7,
-            21
-        )
-        rgb = cv2.cvtColor(rgb, cv2.COLOR_BGR2RGB)
-
-    if background_mode == "on":
-        removed = remove_background_rembg(np.dstack([rgb, alpha]))
-        if removed is not None:
-            return removed
-        alpha = np.minimum(alpha, automatic_background_mask(rgb))
-    elif background_mode == "auto":
-        transparent_ratio = float(np.mean(alpha < 245))
-        if transparent_ratio < 0.01:
-            removed = remove_background_rembg(np.dstack([rgb, alpha]))
-            if removed is not None:
-                result_alpha = removed[:, :, 3]
-                visible = float(np.mean(result_alpha > 20))
-                if 0.01 < visible < 0.98:
-                    return removed
-            alpha = np.minimum(alpha, automatic_background_mask(rgb))
-
-    return np.dstack([rgb, alpha])
-
-
-def quantize_colors(rgb, alpha, color_count):
-    foreground = alpha > 20
-    pixels = rgb[foreground]
-
-    if pixels.size == 0:
-        raise RuntimeError("No visible logo pixels detected")
-
-    unique = np.unique(pixels.reshape(-1, 3), axis=0)
-    count = max(1, min(color_count, len(unique)))
-
-    if len(pixels) > 250000:
-        rng = np.random.default_rng(42)
-        sample_indices = rng.choice(len(pixels), 250000, replace=False)
-        samples = pixels[sample_indices]
-    else:
-        samples = pixels
-
-    samples_lab = cv2.cvtColor(
-        samples.reshape(-1, 1, 3).astype(np.uint8),
-        cv2.COLOR_RGB2LAB
-    ).reshape(-1, 3).astype(np.float32)
-
-    criteria = (
-        cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER,
-        80,
-        0.25
+    target = (
+        max(1, round(width * ratio)),
+        max(1, round(height * ratio))
     )
 
-    _, _, centers_lab = cv2.kmeans(
-        samples_lab,
-        count,
-        None,
-        criteria,
-        5,
-        cv2.KMEANS_PP_CENTERS
+    return image.resize(target, Image.Resampling.LANCZOS)
+
+
+def color_distance(first, second):
+    red = first[0] - second[0]
+    green = first[1] - second[1]
+    blue = first[2] - second[2]
+    return math.sqrt(red * red + green * green + blue * blue)
+
+
+def median(values):
+    values = sorted(values)
+    length = len(values)
+
+    if not length:
+        return 0
+
+    middle = length // 2
+
+    if length % 2:
+        return values[middle]
+
+    return (values[middle - 1] + values[middle]) / 2
+
+
+def sample_border(image, limit=2000):
+    rgb = image.convert("RGB")
+    width, height = rgb.size
+    pixels = rgb.load()
+    perimeter = max(1, width * 2 + height * 2)
+    step = max(1, perimeter // limit)
+    samples = []
+
+    for x in range(0, width, step):
+        samples.append(pixels[x, 0])
+
+        if height > 1:
+            samples.append(pixels[x, height - 1])
+
+    for y in range(0, height, step):
+        samples.append(pixels[0, y])
+
+        if width > 1:
+            samples.append(pixels[width - 1, y])
+
+    return samples
+
+
+def estimate_background(image):
+    samples = sample_border(image)
+
+    if not samples:
+        return (255, 255, 255), 0
+
+    background = (
+        int(median([pixel[0] for pixel in samples])),
+        int(median([pixel[1] for pixel in samples])),
+        int(median([pixel[2] for pixel in samples]))
     )
 
-    centers_rgb = cv2.cvtColor(
-        np.clip(centers_lab, 0, 255).astype(np.uint8).reshape(-1, 1, 3),
-        cv2.COLOR_LAB2RGB
-    ).reshape(-1, 3)
-
-    all_pixels = rgb[foreground]
-    labels = np.empty(len(all_pixels), dtype=np.int32)
-    chunk_size = 150000
-
-    for start in range(0, len(all_pixels), chunk_size):
-        chunk = all_pixels[start:start + chunk_size]
-        chunk_lab = cv2.cvtColor(
-            chunk.reshape(-1, 1, 3).astype(np.uint8),
-            cv2.COLOR_RGB2LAB
-        ).reshape(-1, 3).astype(np.float32)
-        distance = np.sum(
-            (chunk_lab[:, None, :] - centers_lab[None, :, :]) ** 2,
-            axis=2
-        )
-        labels[start:start + len(chunk)] = np.argmin(distance, axis=1)
-
-    label_map = np.full(alpha.shape, -1, dtype=np.int32)
-    label_map[foreground] = labels
-    counts = np.bincount(labels, minlength=count)
-    order = np.argsort(counts)[::-1]
-
-    return label_map, centers_rgb, order, counts
-
-
-def contour_path(contour, scale_x, scale_y, epsilon):
-    perimeter = cv2.arcLength(contour, True)
-    approximation = cv2.approxPolyDP(contour, max(0.15, perimeter * epsilon), True)
-    points = approximation.reshape(-1, 2)
-
-    if len(points) < 3:
-        return ""
-
-    commands = [
-        f"M{points[0][0] * scale_x:.3f},{points[0][1] * scale_y:.3f}"
+    distances = [
+        color_distance(pixel, background)
+        for pixel in samples
     ]
 
-    for x, y in points[1:]:
-        commands.append(f"L{x * scale_x:.3f},{y * scale_y:.3f}")
-
-    commands.append("Z")
-    return "".join(commands)
+    return background, median(distances)
 
 
-def mask_to_paths(mask, scale_x, scale_y, detail, min_area):
-    contours, hierarchy = cv2.findContours(
-        mask,
-        cv2.RETR_CCOMP,
-        cv2.CHAIN_APPROX_TC89_KCOS
+def remove_connected_background(image, tolerance):
+    image = image.convert("RGBA")
+    width, height = image.size
+    pixels = image.load()
+    background, spread = estimate_background(image)
+    threshold = max(float(tolerance), min(72.0, spread * 2.8 + 12.0))
+    visited = bytearray(width * height)
+    background_mask = Image.new("L", (width, height), 255)
+    mask_pixels = background_mask.load()
+    queue = deque()
+
+    def add(x, y):
+        index = y * width + x
+
+        if visited[index]:
+            return
+
+        visited[index] = 1
+
+        if color_distance(pixels[x, y], background) <= threshold:
+            queue.append((x, y))
+
+    for x in range(width):
+        add(x, 0)
+
+        if height > 1:
+            add(x, height - 1)
+
+    for y in range(height):
+        add(0, y)
+
+        if width > 1:
+            add(width - 1, y)
+
+    while queue:
+        x, y = queue.popleft()
+        mask_pixels[x, y] = 0
+
+        if x > 0:
+            add(x - 1, y)
+
+        if x + 1 < width:
+            add(x + 1, y)
+
+        if y > 0:
+            add(x, y - 1)
+
+        if y + 1 < height:
+            add(x, y + 1)
+
+    background_mask = background_mask.filter(
+        ImageFilter.GaussianBlur(radius=0.7)
     )
 
-    if hierarchy is None:
-        return []
+    original_alpha = image.getchannel("A")
+    alpha_pixels = original_alpha.load()
+    mask_pixels = background_mask.load()
+    final_alpha = Image.new("L", (width, height), 0)
+    final_pixels = final_alpha.load()
 
-    hierarchy = hierarchy[0]
-    epsilon = 0.009 * (1.0 - detail / 100.0) + 0.00015
-    paths = []
-
-    for index, contour in enumerate(contours):
-        if hierarchy[index][3] != -1:
-            continue
-        if abs(cv2.contourArea(contour)) < min_area:
-            continue
-
-        parts = [contour_path(contour, scale_x, scale_y, epsilon)]
-        child = hierarchy[index][2]
-
-        while child != -1:
-            child_contour = contours[child]
-            if abs(cv2.contourArea(child_contour)) >= min_area:
-                parts.append(
-                    contour_path(
-                        child_contour,
-                        scale_x,
-                        scale_y,
-                        epsilon
-                    )
-                )
-            child = hierarchy[child][0]
-
-        combined = "".join(part for part in parts if part)
-        if combined:
-            paths.append(combined)
-
-    return paths
-
-
-def rgb_hex(color):
-    red, green, blue = [int(value) for value in color]
-    return f"#{red:02x}{green:02x}{blue:02x}"
-
-
-def build_svg(rgba, original_width, original_height, config, title):
-    height, width = rgba.shape[:2]
-    rgb = rgba[:, :, :3]
-    alpha = rgba[:, :, 3]
-    labels, centers, order, counts = quantize_colors(
-        rgb,
-        alpha,
-        int(config["colors"])
-    )
-
-    scale_x = original_width / float(width)
-    scale_y = original_height / float(height)
-    min_area = max(1.0, float(config["min_area"]))
-    shapes = []
-
-    for label in order:
-        if counts[label] < min_area:
-            continue
-
-        mask = np.where(
-            (labels == int(label)) & (alpha > 20),
-            255,
-            0
-        ).astype(np.uint8)
-
-        kernel = np.ones((3, 3), np.uint8)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-
-        paths = mask_to_paths(
-            mask,
-            scale_x,
-            scale_y,
-            float(config["detail"]),
-            min_area
-        )
-
-        fill = rgb_hex(centers[label])
-
-        for path in paths:
-            shapes.append(
-                f'<path d="{path}" fill="{fill}" fill-rule="evenodd"/>'
+    for y in range(height):
+        for x in range(width):
+            final_pixels[x, y] = min(
+                alpha_pixels[x, y],
+                mask_pixels[x, y]
             )
 
-    if not shapes:
-        raise RuntimeError("No vector contours were generated")
+    image.putalpha(final_alpha)
+    return image
 
-    safe_title = escape(title)
-    content = "\n  ".join(shapes)
 
-    return (
-        '<?xml version="1.0" encoding="UTF-8"?>\n'
-        f'<svg xmlns="http://www.w3.org/2000/svg" '
-        f'width="{original_width}" height="{original_height}" '
-        f'viewBox="0 0 {original_width} {original_height}" '
-        f'role="img" aria-label="{safe_title}">\n'
-        f'  <title>{safe_title}</title>\n'
-        f'  {content}\n'
-        '</svg>\n'
-    )
+def prepare_image(image, background_mode, tolerance):
+    image = image.convert("RGBA")
+    alpha = image.getchannel("A")
+    alpha_extrema = alpha.getextrema()
+    has_transparency = alpha_extrema[0] < 250
+
+    if background_mode == "off":
+        return image
+
+    if background_mode == "auto":
+        if has_transparency:
+            return image
+
+        _, spread = estimate_background(image)
+
+        if spread > 42:
+            return image
+
+    return remove_connected_background(image, tolerance)
+
+
+def color_precision_from_level(colors):
+    colors = max(2, min(64, int(colors)))
+    return max(1, min(8, round(math.log2(colors))))
+
+
+def vtracer_options(config):
+    detail = max(1, min(100, int(config["detail"]))) / 100.0
+    color_precision = color_precision_from_level(config["colors"])
+    layer_difference = max(2, min(64, 48 - color_precision * 5))
+    corner_threshold = round(35 + detail * 55)
+    length_threshold = round(10.0 - detail * 6.5, 2)
+    splice_threshold = round(30 + detail * 35)
+    path_precision = max(3, min(8, round(3 + detail * 5)))
+    filter_speckle = max(0, int(float(config["min_area"])))
+
+    return {
+        "colormode": "color",
+        "hierarchical": "stacked",
+        "mode": "spline",
+        "filter_speckle": filter_speckle,
+        "color_precision": color_precision,
+        "layer_difference": layer_difference,
+        "corner_threshold": corner_threshold,
+        "length_threshold": length_threshold,
+        "max_iterations": 10,
+        "splice_threshold": splice_threshold,
+        "path_precision": path_precision
+    }
 
 
 def vectorize_file(source, output_dir, config):
     extension = Path(source).suffix.lower()
-    base_name = Path(source).stem
     output_path = unique_output_path(
-        os.path.join(output_dir, f"{base_name}.svg")
+        os.path.join(output_dir, f"{Path(source).stem}.svg")
     )
 
     if extension == ".svg":
         shutil.copy2(source, output_path)
         return output_path
 
+    if vtracer is None:
+        raise RuntimeError(T[config["lang"]]["missing_vtracer"])
+
     image = load_image(source)
-    processed, original_width, original_height = resize_for_processing(
+    image = resize_for_processing(image, int(config["max_size"]))
+    image = prepare_image(
         image,
-        int(config["max_size"])
-    )
-    rgba = prepare_rgba(
-        processed,
         config["background"],
-        bool(config["denoise"])
-    )
-    svg = build_svg(
-        rgba,
-        original_width,
-        original_height,
-        config,
-        base_name
+        int(config["background_tolerance"])
     )
 
-    with open(output_path, "w", encoding="utf-8", newline="\n") as file:
-        file.write(svg)
+    temporary_path = None
 
-    return output_path
+    try:
+        with tempfile.NamedTemporaryFile(
+            delete=False,
+            suffix=".png"
+        ) as temporary:
+            temporary_path = temporary.name
+
+        image.save(temporary_path, "PNG", optimize=True)
+
+        vtracer.convert_image_to_svg_py(
+            temporary_path,
+            output_path,
+            **vtracer_options(config)
+        )
+
+        return output_path
+
+    finally:
+        if temporary_path and os.path.exists(temporary_path):
+            try:
+                os.remove(temporary_path)
+            except Exception:
+                pass
 
 
 def draw_progress(lang, index, total, name):
@@ -902,10 +871,12 @@ def draw_progress(lang, index, total, name):
     draw_logo()
     _, width, margin = get_layout()
     draw_header(margin, width, T[lang]["processing"])
+
     ratio = index / max(1, total)
     bar_width = max(10, min(48, width - 12))
     filled = round(bar_width * ratio)
     bar = "█" * filled + "░" * (bar_width - filled)
+
     print(f"{margin}{C_YELLOW}{bar}{C_RESET}")
     print(f"\n{margin}{C_WHITE}{index} / {total}{C_RESET}")
     print(f"{margin}{C_GRAY}{truncate_text(name, width)}{C_RESET}")
@@ -915,6 +886,10 @@ def draw_progress(lang, index, total, name):
 def run_conversion(config, raw_paths=None):
     lang = config["lang"]
     t = T[lang]
+
+    if vtracer is None:
+        show_message(lang, t["failed"], t["missing_vtracer"], C_RED)
+        return []
 
     if raw_paths is None:
         clear_screen(14)
@@ -926,10 +901,15 @@ def run_conversion(config, raw_paths=None):
         raw = ask(t["path"])
         paths = split_paths(raw)
     else:
-        paths = [clean_path(path) for path in raw_paths if os.path.exists(clean_path(path))]
+        paths = [
+            clean_path(path)
+            for path in raw_paths
+            if os.path.exists(clean_path(path))
+        ]
 
     if not paths:
-        show_message(lang, t["failed"], t["not_found"], C_RED)
+        if raw_paths is None:
+            show_message(lang, t["failed"], t["not_found"], C_RED)
         return []
 
     temporary = []
@@ -940,19 +920,30 @@ def run_conversion(config, raw_paths=None):
         files, temporary = collect_inputs(paths)
 
         if not files:
-            show_message(lang, t["failed"], t["not_found"], C_RED)
+            if raw_paths is None:
+                show_message(lang, t["failed"], t["not_found"], C_RED)
             return []
 
         os.makedirs(config["output"], exist_ok=True)
 
         for index, source in enumerate(files, 1):
-            draw_progress(lang, index, len(files), os.path.basename(source))
+            draw_progress(
+                lang,
+                index,
+                len(files),
+                os.path.basename(source)
+            )
+
             try:
-                results.append(
-                    vectorize_file(source, config["output"], config)
+                result = vectorize_file(
+                    source,
+                    config["output"],
+                    config
                 )
-            except Exception as exc:
-                failures.append((source, str(exc)))
+                results.append(result)
+            except Exception as error:
+                failures.append((source, str(error)))
+
             time.sleep(0.03)
 
     finally:
@@ -960,21 +951,37 @@ def run_conversion(config, raw_paths=None):
             shutil.rmtree(folder, ignore_errors=True)
 
     if raw_paths is None:
-        clear_screen(16)
+        clear_screen(17)
         draw_logo()
         _, width, margin = get_layout()
-        draw_header(margin, width, t["success"])
+        title = t["success"] if results else t["failed"]
+        draw_header(margin, width, title)
 
-        print(f"{margin}{C_GREEN}{t['success_msg']}{C_RESET}")
-        print(f"\n{margin}{C_BLUE}{t['output_loc']}{C_RESET}")
-        print_wrapped_text(config["output"], margin, width, C_WHITE)
-        print(f"\n{margin}{C_WHITE}{len(results)} SVG{C_RESET}")
+        if results:
+            print(f"{margin}{C_GREEN}{t['success_msg']}{C_RESET}")
+            print(f"\n{margin}{C_BLUE}{t['output_loc']}{C_RESET}")
+            print_wrapped_text(
+                config["output"],
+                margin,
+                width,
+                C_WHITE
+            )
+            print(f"\n{margin}{C_WHITE}{len(results)} SVG{C_RESET}")
 
         if failures:
-            print(f"{margin}{C_RED}{len(failures)} {t['failed'].lower()}{C_RESET}")
+            print(
+                f"\n{margin}{C_RED}"
+                f"{len(failures)} {t['failed'].lower()}"
+                f"{C_RESET}"
+            )
+
             for source, error in failures[:5]:
-                text = f"{os.path.basename(source)}: {error}"
-                print_wrapped_text(text, margin, width, C_GRAY)
+                print_wrapped_text(
+                    f"{os.path.basename(source)}: {error}",
+                    margin,
+                    width,
+                    C_GRAY
+                )
 
         wait_return(t["press_enter"])
 
@@ -996,12 +1003,27 @@ def settings_menu(config):
         draw_menu_item(margin, "3", t["change_detail"])
         draw_menu_item(margin, "4", t["change_background"])
         draw_menu_item(margin, "5", t["change_language"])
-        draw_menu_item(margin, "0", "Back")
+        draw_menu_item(margin, "0", t["back"])
 
         print()
-        draw_sys_item(margin, width, t["output_path"], config["output"])
-        draw_sys_item(margin, width, t["colors"], str(config["colors"]))
-        draw_sys_item(margin, width, t["detail"], str(config["detail"]))
+        draw_sys_item(
+            margin,
+            width,
+            t["output_path"],
+            config["output"]
+        )
+        draw_sys_item(
+            margin,
+            width,
+            t["colors"],
+            str(config["colors"])
+        )
+        draw_sys_item(
+            margin,
+            width,
+            t["detail"],
+            str(config["detail"])
+        )
         draw_sys_item(
             margin,
             width,
@@ -1017,6 +1039,7 @@ def settings_menu(config):
 
         if choice == "1":
             value = clean_path(ask(t["new_path"]))
+
             if value:
                 try:
                     os.makedirs(value, exist_ok=True)
@@ -1026,6 +1049,7 @@ def settings_menu(config):
 
         elif choice == "2":
             value = ask(t["new_colors"])
+
             try:
                 config["colors"] = max(2, min(64, int(value)))
             except Exception:
@@ -1033,6 +1057,7 @@ def settings_menu(config):
 
         elif choice == "3":
             value = ask(t["new_detail"])
+
             try:
                 config["detail"] = max(1, min(100, int(value)))
             except Exception:
@@ -1041,7 +1066,9 @@ def settings_menu(config):
         elif choice == "4":
             modes = ["auto", "on", "off"]
             current = modes.index(config["background"])
-            config["background"] = modes[(current + 1) % len(modes)]
+            config["background"] = modes[
+                (current + 1) % len(modes)
+            ]
 
         elif choice == "5":
             clear_screen(14)
@@ -1053,6 +1080,7 @@ def settings_menu(config):
             draw_menu_item(margin, "3", "中文")
             selected = ask(t["action"])
             mapping = {"1": "en", "2": "ru", "3": "zh"}
+
             if selected in mapping:
                 config["lang"] = mapping[selected]
 
@@ -1072,13 +1100,28 @@ def main_menu(config):
         print(f"{margin}{C_BLUE}{t['actions']}{C_RESET}")
         draw_menu_item(margin, "1", t["start"])
         draw_menu_item(margin, "2", t["settings"])
-        draw_menu_item(margin, "0", "Exit")
+        draw_menu_item(margin, "0", t["exit"])
         print()
 
         print(f"{margin}{C_BLUE}{t['system']}{C_RESET}")
-        draw_sys_item(margin, width, t["output_path"], config["output"])
-        draw_sys_item(margin, width, t["colors"], str(config["colors"]))
-        draw_sys_item(margin, width, t["detail"], str(config["detail"]))
+        draw_sys_item(
+            margin,
+            width,
+            t["output_path"],
+            config["output"]
+        )
+        draw_sys_item(
+            margin,
+            width,
+            t["colors"],
+            str(config["colors"])
+        )
+        draw_sys_item(
+            margin,
+            width,
+            t["detail"],
+            str(config["detail"])
+        )
         draw_sys_item(
             margin,
             width,
@@ -1110,38 +1153,50 @@ def parse_arguments():
     )
     parser.add_argument("--max-size", type=int)
     parser.add_argument("--min-area", type=float)
-    parser.add_argument("--no-denoise", action="store_true")
+    parser.add_argument("--background-tolerance", type=int)
     return parser.parse_args()
 
 
-def apply_arguments(config, args):
-    if args.output:
-        config["output"] = clean_path(args.output)
-    if args.colors is not None:
-        config["colors"] = max(2, min(64, args.colors))
-    if args.detail is not None:
-        config["detail"] = max(1, min(100, args.detail))
-    if args.background:
-        config["background"] = args.background
-    if args.max_size is not None:
-        config["max_size"] = max(256, args.max_size)
-    if args.min_area is not None:
-        config["min_area"] = max(0.1, args.min_area)
-    if args.no_denoise:
-        config["denoise"] = 0
+def apply_arguments(config, arguments):
+    if arguments.output:
+        config["output"] = clean_path(arguments.output)
+
+    if arguments.colors is not None:
+        config["colors"] = max(2, min(64, arguments.colors))
+
+    if arguments.detail is not None:
+        config["detail"] = max(1, min(100, arguments.detail))
+
+    if arguments.background:
+        config["background"] = arguments.background
+
+    if arguments.max_size is not None:
+        config["max_size"] = max(256, arguments.max_size)
+
+    if arguments.min_area is not None:
+        config["min_area"] = max(0, arguments.min_area)
+
+    if arguments.background_tolerance is not None:
+        config["background_tolerance"] = max(
+            1,
+            min(255, arguments.background_tolerance)
+        )
+
     return config
 
 
 def main():
     enable_ansi()
-    args = parse_arguments()
-    config = apply_arguments(load_config(), args)
+    arguments = parse_arguments()
+    config = apply_arguments(load_config(), arguments)
 
-    if args.inputs:
+    if arguments.inputs:
         os.makedirs(config["output"], exist_ok=True)
-        results = run_conversion(config, args.inputs)
+        results = run_conversion(config, arguments.inputs)
+
         for path in results:
             print(path)
+
         return 0 if results else 1
 
     try:
