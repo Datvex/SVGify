@@ -12,20 +12,10 @@ import urllib.parse
 import unicodedata
 import textwrap
 from pathlib import Path
-from collections import deque
+from collections import deque, defaultdict
+from xml.sax.saxutils import escape
 
 from PIL import Image, ImageOps, ImageFilter
-
-try:
-    from pillow_heif import register_heif_opener
-    register_heif_opener()
-except Exception:
-    pass
-
-try:
-    import vtracer
-except Exception:
-    vtracer = None
 
 C_BLUE = "\033[38;2;0;175;255m"
 C_YELLOW = "\033[38;2;248;246;117m"
@@ -39,15 +29,9 @@ C_RESET = "\033[0m"
 C_BG_INPUT = "\033[48;2;45;45;45m"
 
 SUPPORTED_EXTS = {
-    ".png", ".jpg", ".jpeg", ".jfif", ".webp", ".bmp", ".dib", ".gif",
-    ".tif", ".tiff", ".ico", ".ppm", ".pgm", ".pbm", ".pnm", ".tga",
-    ".heic", ".heif", ".avif", ".raw", ".dng", ".cr2", ".cr3", ".nef",
-    ".arw", ".orf", ".rw2", ".raf", ".pef", ".srw", ".pdf", ".svg"
-}
-
-RAW_EXTS = {
-    ".raw", ".dng", ".cr2", ".cr3", ".nef", ".arw", ".orf", ".rw2",
-    ".raf", ".pef", ".srw"
+    ".png", ".jpg", ".jpeg", ".jfif", ".webp", ".bmp", ".dib",
+    ".gif", ".tif", ".tiff", ".ico", ".ppm", ".pgm", ".pbm",
+    ".pnm", ".tga"
 }
 
 ARCHIVE_EXTS = {".zip"}
@@ -67,14 +51,14 @@ T = {
         "settings": "Settings",
         "system": "System",
         "output_path": "Output path",
-        "colors": "Color level",
+        "colors": "Colors",
         "detail": "Detail",
         "background": "Background removal",
         "language": "Language",
         "tip_main": "Type a number to select, or Ctrl+C to exit",
         "action": "Action:",
         "input": "Input",
-        "input_help": "Enter paths to images, PDF files, SVG files, ZIP archives or folders.",
+        "input_help": "Enter paths to images, ZIP archives or folders.",
         "path": "Path:",
         "not_found": "No supported files found.",
         "processing": "Vectorizing",
@@ -84,19 +68,18 @@ T = {
         "failed": "Failed",
         "press_enter": "Press Enter to return",
         "change_path": "Change output path",
-        "change_colors": "Change color level",
+        "change_colors": "Change number of colors",
         "change_detail": "Change contour detail",
         "change_background": "Change background removal",
         "change_language": "Change language",
         "new_path": "New path:",
-        "new_colors": "Color level from 2 to 64:",
+        "new_colors": "Colors from 2 to 64:",
         "new_detail": "Detail from 1 to 100:",
         "auto": "Auto",
         "on": "Enabled",
         "off": "Disabled",
         "back": "Back",
-        "exit": "Exit",
-        "missing_vtracer": "VTracer is not installed. Run: python -m pip install -r requirements.txt"
+        "exit": "Exit"
     },
     "ru": {
         "commands": "Команды",
@@ -105,14 +88,14 @@ T = {
         "settings": "Настройки",
         "system": "Система",
         "output_path": "Путь сохранения",
-        "colors": "Уровень цветов",
+        "colors": "Количество цветов",
         "detail": "Детализация",
         "background": "Удаление фона",
         "language": "Язык",
         "tip_main": "Введите номер для выбора, или Ctrl+C для выхода",
         "action": "Действие:",
         "input": "Ввод",
-        "input_help": "Введите пути к изображениям, PDF, SVG, ZIP-архивам или папкам.",
+        "input_help": "Введите пути к изображениям, ZIP-архивам или папкам.",
         "path": "Путь:",
         "not_found": "Поддерживаемые файлы не найдены.",
         "processing": "Векторизация",
@@ -122,19 +105,18 @@ T = {
         "failed": "Ошибка",
         "press_enter": "Нажмите Enter для возврата",
         "change_path": "Изменить путь сохранения",
-        "change_colors": "Изменить уровень цветов",
-        "change_detail": "Изменить детализацию контуров",
+        "change_colors": "Изменить количество цветов",
+        "change_detail": "Изменить детализацию",
         "change_background": "Изменить удаление фона",
         "change_language": "Изменить язык",
         "new_path": "Новый путь:",
-        "new_colors": "Уровень цветов от 2 до 64:",
+        "new_colors": "Количество цветов от 2 до 64:",
         "new_detail": "Детализация от 1 до 100:",
         "auto": "Авто",
         "on": "Включено",
         "off": "Отключено",
         "back": "Назад",
-        "exit": "Выход",
-        "missing_vtracer": "VTracer не установлен. Выполните: python -m pip install -r requirements.txt"
+        "exit": "Выход"
     },
     "zh": {
         "commands": "命令",
@@ -143,14 +125,14 @@ T = {
         "settings": "设置",
         "system": "系统",
         "output_path": "输出路径",
-        "colors": "颜色级别",
+        "colors": "颜色数量",
         "detail": "细节",
         "background": "背景移除",
         "language": "语言",
         "tip_main": "输入数字进行选择，或按 Ctrl+C 退出",
         "action": "操作:",
         "input": "输入",
-        "input_help": "输入图像、PDF、SVG、ZIP 压缩包或文件夹的路径。",
+        "input_help": "输入图像、ZIP 压缩包或文件夹的路径。",
         "path": "路径:",
         "not_found": "未找到支持的文件。",
         "processing": "矢量化",
@@ -160,19 +142,18 @@ T = {
         "failed": "错误",
         "press_enter": "按 Enter 返回",
         "change_path": "更改输出路径",
-        "change_colors": "更改颜色级别",
+        "change_colors": "更改颜色数量",
         "change_detail": "更改轮廓细节",
         "change_background": "更改背景移除",
         "change_language": "更改语言",
         "new_path": "新路径:",
-        "new_colors": "颜色级别 2 到 64:",
+        "new_colors": "颜色数量 2 到 64:",
         "new_detail": "细节 1 到 100:",
         "auto": "自动",
         "on": "启用",
         "off": "禁用",
         "back": "返回",
-        "exit": "退出",
-        "missing_vtracer": "未安装 VTracer。运行: python -m pip install -r requirements.txt"
+        "exit": "退出"
     }
 }
 
@@ -184,6 +165,7 @@ def enable_ansi():
             kernel32 = ctypes.windll.kernel32
             handle = kernel32.GetStdHandle(-11)
             mode = ctypes.c_uint32()
+
             if kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
                 kernel32.SetConsoleMode(handle, mode.value | 0x0004)
         except Exception:
@@ -201,6 +183,7 @@ atexit.register(restore_console)
 def char_width(ch):
     if unicodedata.combining(ch):
         return 0
+
     return 2 if unicodedata.east_asian_width(ch) in ("F", "W") else 1
 
 
@@ -427,11 +410,11 @@ def default_config():
     return {
         "lang": "ru",
         "output": get_default_output(),
-        "colors": 16,
+        "colors": 12,
         "detail": 75,
         "background": "auto",
-        "max_size": 2400,
-        "min_area": 6,
+        "max_size": 1600,
+        "min_area": 8,
         "background_tolerance": 34
     }
 
@@ -555,57 +538,7 @@ def collect_inputs(paths):
     return files, temporary
 
 
-def load_raw(path):
-    try:
-        import rawpy
-    except Exception as error:
-        raise RuntimeError("RAW support requires rawpy") from error
-
-    with rawpy.imread(path) as raw:
-        rgb = raw.postprocess(
-            use_camera_wb=True,
-            no_auto_bright=False,
-            output_bps=8,
-            gamma=(2.222, 4.5)
-        )
-
-    return Image.fromarray(rgb, "RGB").convert("RGBA")
-
-
-def load_pdf(path):
-    try:
-        import fitz
-    except Exception as error:
-        raise RuntimeError("PDF support requires PyMuPDF") from error
-
-    document = fitz.open(path)
-
-    try:
-        if document.page_count < 1:
-            raise RuntimeError("PDF has no pages")
-
-        page = document.load_page(0)
-        pixmap = page.get_pixmap(matrix=fitz.Matrix(3.0, 3.0), alpha=True)
-        mode = "RGBA" if pixmap.alpha else "RGB"
-
-        return Image.frombytes(
-            mode,
-            (pixmap.width, pixmap.height),
-            pixmap.samples
-        ).convert("RGBA")
-    finally:
-        document.close()
-
-
 def load_image(path):
-    extension = Path(path).suffix.lower()
-
-    if extension in RAW_EXTS:
-        return load_raw(path)
-
-    if extension == ".pdf":
-        return load_pdf(path)
-
     with Image.open(path) as source:
         try:
             source.seek(0)
@@ -620,7 +553,7 @@ def resize_for_processing(image, max_size):
     longest = max(width, height)
 
     if longest <= max_size:
-        return image
+        return image, width, height
 
     ratio = max_size / float(longest)
     target = (
@@ -628,7 +561,11 @@ def resize_for_processing(image, max_size):
         max(1, round(height * ratio))
     )
 
-    return image.resize(target, Image.Resampling.LANCZOS)
+    return (
+        image.resize(target, Image.Resampling.LANCZOS),
+        width,
+        height
+    )
 
 
 def color_distance(first, second):
@@ -640,14 +577,13 @@ def color_distance(first, second):
 
 def median(values):
     values = sorted(values)
-    length = len(values)
 
-    if not length:
+    if not values:
         return 0
 
-    middle = length // 2
+    middle = len(values) // 2
 
-    if length % 2:
+    if len(values) % 2:
         return values[middle]
 
     return (values[middle - 1] + values[middle]) / 2
@@ -703,8 +639,8 @@ def remove_connected_background(image, tolerance):
     background, spread = estimate_background(image)
     threshold = max(float(tolerance), min(72.0, spread * 2.8 + 12.0))
     visited = bytearray(width * height)
-    background_mask = Image.new("L", (width, height), 255)
-    mask_pixels = background_mask.load()
+    mask = Image.new("L", (width, height), 255)
+    mask_pixels = mask.load()
     queue = deque()
 
     def add(x, y):
@@ -746,20 +682,17 @@ def remove_connected_background(image, tolerance):
         if y + 1 < height:
             add(x, y + 1)
 
-    background_mask = background_mask.filter(
-        ImageFilter.GaussianBlur(radius=0.7)
-    )
-
+    mask = mask.filter(ImageFilter.GaussianBlur(radius=0.65))
     original_alpha = image.getchannel("A")
-    alpha_pixels = original_alpha.load()
-    mask_pixels = background_mask.load()
+    original_pixels = original_alpha.load()
+    mask_pixels = mask.load()
     final_alpha = Image.new("L", (width, height), 0)
     final_pixels = final_alpha.load()
 
     for y in range(height):
         for x in range(width):
             final_pixels[x, y] = min(
-                alpha_pixels[x, y],
+                original_pixels[x, y],
                 mask_pixels[x, y]
             )
 
@@ -769,15 +702,14 @@ def remove_connected_background(image, tolerance):
 
 def prepare_image(image, background_mode, tolerance):
     image = image.convert("RGBA")
-    alpha = image.getchannel("A")
-    alpha_extrema = alpha.getextrema()
-    has_transparency = alpha_extrema[0] < 250
 
     if background_mode == "off":
         return image
 
+    alpha = image.getchannel("A")
+
     if background_mode == "auto":
-        if has_transparency:
+        if alpha.getextrema()[0] < 250:
             return image
 
         _, spread = estimate_background(image)
@@ -788,82 +720,413 @@ def prepare_image(image, background_mode, tolerance):
     return remove_connected_background(image, tolerance)
 
 
-def color_precision_from_level(colors):
-    colors = max(2, min(64, int(colors)))
-    return max(1, min(8, round(math.log2(colors))))
+def quantize_image(image, colors):
+    rgba = image.convert("RGBA")
+    alpha = rgba.getchannel("A")
+    white = Image.new("RGB", rgba.size, (255, 255, 255))
+    white.paste(rgba.convert("RGB"), mask=alpha)
+
+    try:
+        quantized = white.quantize(
+            colors=max(2, min(64, int(colors))),
+            method=Image.Quantize.FASTOCTREE,
+            dither=Image.Dither.NONE
+        )
+    except AttributeError:
+        quantized = white.quantize(
+            colors=max(2, min(64, int(colors))),
+            method=2,
+            dither=0
+        )
+
+    palette = quantized.getpalette() or []
+    used = quantized.getcolors(maxcolors=256) or []
+    used.sort(reverse=True)
+
+    colors_by_index = {}
+
+    for _, index in used:
+        offset = index * 3
+
+        if offset + 2 < len(palette):
+            colors_by_index[index] = (
+                palette[offset],
+                palette[offset + 1],
+                palette[offset + 2]
+            )
+
+    return quantized, alpha, colors_by_index
 
 
-def vtracer_options(config):
-    detail = max(1, min(100, int(config["detail"]))) / 100.0
-    color_precision = color_precision_from_level(config["colors"])
-    layer_difference = max(2, min(64, 48 - color_precision * 5))
-    corner_threshold = round(35 + detail * 55)
-    length_threshold = round(10.0 - detail * 6.5, 2)
-    splice_threshold = round(30 + detail * 35)
-    path_precision = max(3, min(8, round(3 + detail * 5)))
-    filter_speckle = max(0, int(float(config["min_area"])))
+def direction(first, second):
+    dx = second[0] - first[0]
+    dy = second[1] - first[1]
 
-    return {
-        "colormode": "color",
-        "hierarchical": "stacked",
-        "mode": "spline",
-        "filter_speckle": filter_speckle,
-        "color_precision": color_precision,
-        "layer_difference": layer_difference,
-        "corner_threshold": corner_threshold,
-        "length_threshold": length_threshold,
-        "max_iterations": 10,
-        "splice_threshold": splice_threshold,
-        "path_precision": path_precision
-    }
+    if dx > 0:
+        return 0
+
+    if dy > 0:
+        return 1
+
+    if dx < 0:
+        return 2
+
+    return 3
+
+
+def select_next(previous, current, candidates):
+    previous_direction = direction(previous, current)
+    priorities = {1: 0, 0: 1, 3: 2, 2: 3}
+
+    return min(
+        candidates,
+        key=lambda point: priorities[
+            (direction(current, point) - previous_direction) % 4
+        ]
+    )
+
+
+def build_edges(indices, alpha, target, width, height):
+    edges = set()
+    index_pixels = indices.load()
+    alpha_pixels = alpha.load()
+
+    def matches(x, y):
+        return (
+            0 <= x < width
+            and 0 <= y < height
+            and alpha_pixels[x, y] >= 32
+            and index_pixels[x, y] == target
+        )
+
+    for y in range(height):
+        for x in range(width):
+            if not matches(x, y):
+                continue
+
+            if not matches(x, y - 1):
+                edges.add(((x, y), (x + 1, y)))
+
+            if not matches(x + 1, y):
+                edges.add(((x + 1, y), (x + 1, y + 1)))
+
+            if not matches(x, y + 1):
+                edges.add(((x + 1, y + 1), (x, y + 1)))
+
+            if not matches(x - 1, y):
+                edges.add(((x, y + 1), (x, y)))
+
+    return edges
+
+
+def trace_loops(edges):
+    outgoing = defaultdict(set)
+
+    for start, end in edges:
+        outgoing[start].add(end)
+
+    remaining = set(edges)
+    loops = []
+
+    while remaining:
+        start_edge = min(remaining)
+        start, current = start_edge
+        previous = start
+        loop = [start, current]
+        remaining.remove(start_edge)
+        outgoing[start].discard(current)
+        safety = 0
+
+        while current != start and safety <= len(edges) + 4:
+            safety += 1
+            candidates = [
+                point
+                for point in outgoing.get(current, ())
+                if (current, point) in remaining
+            ]
+
+            if not candidates:
+                break
+
+            next_point = select_next(previous, current, candidates)
+            remaining.remove((current, next_point))
+            outgoing[current].discard(next_point)
+            previous, current = current, next_point
+            loop.append(current)
+
+        if len(loop) >= 4 and loop[-1] == loop[0]:
+            loops.append(loop[:-1])
+
+    return loops
+
+
+def perpendicular_distance(point, start, end):
+    if start == end:
+        return math.hypot(
+            point[0] - start[0],
+            point[1] - start[1]
+        )
+
+    numerator = abs(
+        (end[1] - start[1]) * point[0]
+        - (end[0] - start[0]) * point[1]
+        + end[0] * start[1]
+        - end[1] * start[0]
+    )
+
+    denominator = math.hypot(
+        end[1] - start[1],
+        end[0] - start[0]
+    )
+
+    return numerator / denominator
+
+
+def simplify_open(points, tolerance):
+    if len(points) <= 2:
+        return points
+
+    start = points[0]
+    end = points[-1]
+    maximum = 0
+    selected = 0
+
+    for index in range(1, len(points) - 1):
+        distance = perpendicular_distance(
+            points[index],
+            start,
+            end
+        )
+
+        if distance > maximum:
+            maximum = distance
+            selected = index
+
+    if maximum > tolerance:
+        left = simplify_open(points[:selected + 1], tolerance)
+        right = simplify_open(points[selected:], tolerance)
+        return left[:-1] + right
+
+    return [start, end]
+
+
+def polygon_area(points):
+    total = 0
+
+    for index, point in enumerate(points):
+        next_point = points[(index + 1) % len(points)]
+        total += point[0] * next_point[1]
+        total -= next_point[0] * point[1]
+
+    return total / 2.0
+
+
+def simplify_closed(points, tolerance):
+    if len(points) <= 4:
+        return points
+
+    center_x = sum(point[0] for point in points) / len(points)
+    center_y = sum(point[1] for point in points) / len(points)
+
+    pivot = max(
+        range(len(points)),
+        key=lambda index: (
+            points[index][0] - center_x
+        ) ** 2 + (
+            points[index][1] - center_y
+        ) ** 2
+    )
+
+    rotated = points[pivot:] + points[:pivot]
+    simplified = simplify_open(
+        rotated + [rotated[0]],
+        tolerance
+    )
+
+    if simplified and simplified[-1] == simplified[0]:
+        simplified.pop()
+
+    return simplified
+
+
+def remove_collinear(points):
+    if len(points) < 3:
+        return points
+
+    result = []
+
+    for index, current in enumerate(points):
+        previous = points[index - 1]
+        following = points[(index + 1) % len(points)]
+
+        first_direction = (
+            current[0] - previous[0],
+            current[1] - previous[1]
+        )
+        second_direction = (
+            following[0] - current[0],
+            following[1] - current[1]
+        )
+
+        if (
+            first_direction[0] * second_direction[1]
+            != first_direction[1] * second_direction[0]
+        ):
+            result.append(current)
+
+    return result
+
+
+def format_number(value):
+    rounded = round(value, 3)
+
+    if rounded == int(rounded):
+        return str(int(rounded))
+
+    return f"{rounded:.3f}".rstrip("0").rstrip(".")
+
+
+def loop_to_path(points, scale_x, scale_y):
+    if len(points) < 3:
+        return ""
+
+    first = points[0]
+    parts = [
+        f"M{format_number(first[0] * scale_x)} "
+        f"{format_number(first[1] * scale_y)}"
+    ]
+
+    for x, y in points[1:]:
+        parts.append(
+            f"L{format_number(x * scale_x)} "
+            f"{format_number(y * scale_y)}"
+        )
+
+    parts.append("Z")
+    return " ".join(parts)
+
+
+def rgb_hex(color):
+    return "#{:02x}{:02x}{:02x}".format(*color)
+
+
+def build_svg(image, original_width, original_height, config, title):
+    width, height = image.size
+    quantized, alpha, palette = quantize_image(
+        image,
+        config["colors"]
+    )
+    scale_x = original_width / float(width)
+    scale_y = original_height / float(height)
+    detail = max(1, min(100, int(config["detail"])))
+    tolerance = 0.15 + (100 - detail) * 0.035
+    minimum_area = max(0.1, float(config["min_area"]))
+    shapes = []
+
+    usage = quantized.getcolors(maxcolors=256) or []
+    usage.sort(reverse=True)
+
+    for count, index in usage:
+        if index not in palette:
+            continue
+
+        if count < minimum_area:
+            continue
+
+        edges = build_edges(
+            quantized,
+            alpha,
+            index,
+            width,
+            height
+        )
+
+        if not edges:
+            continue
+
+        loops = trace_loops(edges)
+        path_parts = []
+
+        for loop in loops:
+            loop = remove_collinear(loop)
+
+            if len(loop) < 3:
+                continue
+
+            if abs(polygon_area(loop)) < minimum_area:
+                continue
+
+            loop = simplify_closed(loop, tolerance)
+
+            if len(loop) < 3:
+                continue
+
+            path = loop_to_path(loop, scale_x, scale_y)
+
+            if path:
+                path_parts.append(path)
+
+        if path_parts:
+            shapes.append(
+                f'<path d="{" ".join(path_parts)}" '
+                f'fill="{rgb_hex(palette[index])}" '
+                f'fill-rule="evenodd"/>'
+            )
+
+    if not shapes:
+        raise RuntimeError("No visible vector contours were generated")
+
+    safe_title = escape(title)
+    content = "\n  ".join(shapes)
+
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        f'<svg xmlns="http://www.w3.org/2000/svg" '
+        f'width="{original_width}" height="{original_height}" '
+        f'viewBox="0 0 {original_width} {original_height}" '
+        f'role="img" aria-label="{safe_title}">\n'
+        f'  <title>{safe_title}</title>\n'
+        f'  {content}\n'
+        '</svg>\n'
+    )
 
 
 def vectorize_file(source, output_dir, config):
-    extension = Path(source).suffix.lower()
     output_path = unique_output_path(
-        os.path.join(output_dir, f"{Path(source).stem}.svg")
+        os.path.join(
+            output_dir,
+            f"{Path(source).stem}.svg"
+        )
     )
 
-    if extension == ".svg":
-        shutil.copy2(source, output_path)
-        return output_path
-
-    if vtracer is None:
-        raise RuntimeError(T[config["lang"]]["missing_vtracer"])
-
     image = load_image(source)
-    image = resize_for_processing(image, int(config["max_size"]))
+    image, original_width, original_height = resize_for_processing(
+        image,
+        int(config["max_size"])
+    )
     image = prepare_image(
         image,
         config["background"],
         int(config["background_tolerance"])
     )
 
-    temporary_path = None
+    svg = build_svg(
+        image,
+        original_width,
+        original_height,
+        config,
+        Path(source).stem
+    )
 
-    try:
-        with tempfile.NamedTemporaryFile(
-            delete=False,
-            suffix=".png"
-        ) as temporary:
-            temporary_path = temporary.name
+    with open(
+        output_path,
+        "w",
+        encoding="utf-8",
+        newline="\n"
+    ) as file:
+        file.write(svg)
 
-        image.save(temporary_path, "PNG", optimize=True)
-
-        vtracer.convert_image_to_svg_py(
-            temporary_path,
-            output_path,
-            **vtracer_options(config)
-        )
-
-        return output_path
-
-    finally:
-        if temporary_path and os.path.exists(temporary_path):
-            try:
-                os.remove(temporary_path)
-            except Exception:
-                pass
+    return output_path
 
 
 def draw_progress(lang, index, total, name):
@@ -885,20 +1148,21 @@ def draw_progress(lang, index, total, name):
 
 def run_conversion(config, raw_paths=None):
     lang = config["lang"]
-    t = T[lang]
-
-    if vtracer is None:
-        show_message(lang, t["failed"], t["missing_vtracer"], C_RED)
-        return []
+    translations = T[lang]
 
     if raw_paths is None:
         clear_screen(14)
         draw_logo()
         _, width, margin = get_layout()
-        draw_header(margin, width, t["input"])
-        print_wrapped_text(t["input_help"], margin, width, C_GRAY)
+        draw_header(margin, width, translations["input"])
+        print_wrapped_text(
+            translations["input_help"],
+            margin,
+            width,
+            C_GRAY
+        )
         print()
-        raw = ask(t["path"])
+        raw = ask(translations["path"])
         paths = split_paths(raw)
     else:
         paths = [
@@ -909,7 +1173,13 @@ def run_conversion(config, raw_paths=None):
 
     if not paths:
         if raw_paths is None:
-            show_message(lang, t["failed"], t["not_found"], C_RED)
+            show_message(
+                lang,
+                translations["failed"],
+                translations["not_found"],
+                C_RED
+            )
+
         return []
 
     temporary = []
@@ -921,7 +1191,13 @@ def run_conversion(config, raw_paths=None):
 
         if not files:
             if raw_paths is None:
-                show_message(lang, t["failed"], t["not_found"], C_RED)
+                show_message(
+                    lang,
+                    translations["failed"],
+                    translations["not_found"],
+                    C_RED
+                )
+
             return []
 
         os.makedirs(config["output"], exist_ok=True)
@@ -935,12 +1211,13 @@ def run_conversion(config, raw_paths=None):
             )
 
             try:
-                result = vectorize_file(
-                    source,
-                    config["output"],
-                    config
+                results.append(
+                    vectorize_file(
+                        source,
+                        config["output"],
+                        config
+                    )
                 )
-                results.append(result)
             except Exception as error:
                 failures.append((source, str(error)))
 
@@ -954,12 +1231,24 @@ def run_conversion(config, raw_paths=None):
         clear_screen(17)
         draw_logo()
         _, width, margin = get_layout()
-        title = t["success"] if results else t["failed"]
+        title = (
+            translations["success"]
+            if results
+            else translations["failed"]
+        )
         draw_header(margin, width, title)
 
         if results:
-            print(f"{margin}{C_GREEN}{t['success_msg']}{C_RESET}")
-            print(f"\n{margin}{C_BLUE}{t['output_loc']}{C_RESET}")
+            print(
+                f"{margin}{C_GREEN}"
+                f"{translations['success_msg']}"
+                f"{C_RESET}"
+            )
+            print(
+                f"\n{margin}{C_BLUE}"
+                f"{translations['output_loc']}"
+                f"{C_RESET}"
+            )
             print_wrapped_text(
                 config["output"],
                 margin,
@@ -971,7 +1260,8 @@ def run_conversion(config, raw_paths=None):
         if failures:
             print(
                 f"\n{margin}{C_RED}"
-                f"{len(failures)} {t['failed'].lower()}"
+                f"{len(failures)} "
+                f"{translations['failed'].lower()}"
                 f"{C_RESET}"
             )
 
@@ -983,7 +1273,7 @@ def run_conversion(config, raw_paths=None):
                     C_GRAY
                 )
 
-        wait_return(t["press_enter"])
+        wait_return(translations["press_enter"])
 
     return results
 
@@ -991,54 +1281,81 @@ def run_conversion(config, raw_paths=None):
 def settings_menu(config):
     while True:
         lang = config["lang"]
-        t = T[lang]
+        translations = T[lang]
 
         clear_screen(22)
         draw_logo()
         _, width, margin = get_layout()
-        draw_header(margin, width, t["settings"])
+        draw_header(margin, width, translations["settings"])
 
-        draw_menu_item(margin, "1", t["change_path"])
-        draw_menu_item(margin, "2", t["change_colors"])
-        draw_menu_item(margin, "3", t["change_detail"])
-        draw_menu_item(margin, "4", t["change_background"])
-        draw_menu_item(margin, "5", t["change_language"])
-        draw_menu_item(margin, "0", t["back"])
+        draw_menu_item(
+            margin,
+            "1",
+            translations["change_path"]
+        )
+        draw_menu_item(
+            margin,
+            "2",
+            translations["change_colors"]
+        )
+        draw_menu_item(
+            margin,
+            "3",
+            translations["change_detail"]
+        )
+        draw_menu_item(
+            margin,
+            "4",
+            translations["change_background"]
+        )
+        draw_menu_item(
+            margin,
+            "5",
+            translations["change_language"]
+        )
+        draw_menu_item(
+            margin,
+            "0",
+            translations["back"]
+        )
 
         print()
         draw_sys_item(
             margin,
             width,
-            t["output_path"],
+            translations["output_path"],
             config["output"]
         )
         draw_sys_item(
             margin,
             width,
-            t["colors"],
+            translations["colors"],
             str(config["colors"])
         )
         draw_sys_item(
             margin,
             width,
-            t["detail"],
+            translations["detail"],
             str(config["detail"])
         )
         draw_sys_item(
             margin,
             width,
-            t["background"],
-            t.get(config["background"], config["background"])
+            translations["background"],
+            translations.get(
+                config["background"],
+                config["background"]
+            )
         )
 
-        choice = ask(t["action"])
+        choice = ask(translations["action"])
 
         if choice == "0":
             save_config(config)
             return
 
         if choice == "1":
-            value = clean_path(ask(t["new_path"]))
+            value = clean_path(ask(translations["new_path"]))
 
             if value:
                 try:
@@ -1048,18 +1365,24 @@ def settings_menu(config):
                     pass
 
         elif choice == "2":
-            value = ask(t["new_colors"])
+            value = ask(translations["new_colors"])
 
             try:
-                config["colors"] = max(2, min(64, int(value)))
+                config["colors"] = max(
+                    2,
+                    min(64, int(value))
+                )
             except Exception:
                 pass
 
         elif choice == "3":
-            value = ask(t["new_detail"])
+            value = ask(translations["new_detail"])
 
             try:
-                config["detail"] = max(1, min(100, int(value)))
+                config["detail"] = max(
+                    1,
+                    min(100, int(value))
+                )
             except Exception:
                 pass
 
@@ -1074,11 +1397,15 @@ def settings_menu(config):
             clear_screen(14)
             draw_logo()
             _, width, margin = get_layout()
-            draw_header(margin, width, t["language"])
+            draw_header(
+                margin,
+                width,
+                translations["language"]
+            )
             draw_menu_item(margin, "1", "English")
             draw_menu_item(margin, "2", "Русский")
             draw_menu_item(margin, "3", "中文")
-            selected = ask(t["action"])
+            selected = ask(translations["action"])
             mapping = {"1": "en", "2": "ru", "3": "zh"}
 
             if selected in mapping:
@@ -1090,47 +1417,78 @@ def settings_menu(config):
 def main_menu(config):
     while True:
         lang = config["lang"]
-        t = T[lang]
+        translations = T[lang]
 
         clear_screen(20)
         draw_logo()
         _, width, margin = get_layout()
-        draw_header(margin, width, t["commands"])
+        draw_header(
+            margin,
+            width,
+            translations["commands"]
+        )
 
-        print(f"{margin}{C_BLUE}{t['actions']}{C_RESET}")
-        draw_menu_item(margin, "1", t["start"])
-        draw_menu_item(margin, "2", t["settings"])
-        draw_menu_item(margin, "0", t["exit"])
+        print(
+            f"{margin}{C_BLUE}"
+            f"{translations['actions']}"
+            f"{C_RESET}"
+        )
+        draw_menu_item(
+            margin,
+            "1",
+            translations["start"]
+        )
+        draw_menu_item(
+            margin,
+            "2",
+            translations["settings"]
+        )
+        draw_menu_item(
+            margin,
+            "0",
+            translations["exit"]
+        )
         print()
 
-        print(f"{margin}{C_BLUE}{t['system']}{C_RESET}")
+        print(
+            f"{margin}{C_BLUE}"
+            f"{translations['system']}"
+            f"{C_RESET}"
+        )
         draw_sys_item(
             margin,
             width,
-            t["output_path"],
+            translations["output_path"],
             config["output"]
         )
         draw_sys_item(
             margin,
             width,
-            t["colors"],
+            translations["colors"],
             str(config["colors"])
         )
         draw_sys_item(
             margin,
             width,
-            t["detail"],
+            translations["detail"],
             str(config["detail"])
         )
         draw_sys_item(
             margin,
             width,
-            t["background"],
-            t.get(config["background"], config["background"])
+            translations["background"],
+            translations.get(
+                config["background"],
+                config["background"]
+            )
         )
 
-        print_tip(t["tip_main"], margin, width)
-        choice = ask(t["action"])
+        print_tip(
+            translations["tip_main"],
+            margin,
+            width
+        )
+        choice = ask(translations["action"])
 
         if choice == "1":
             run_conversion(config)
@@ -1162,19 +1520,31 @@ def apply_arguments(config, arguments):
         config["output"] = clean_path(arguments.output)
 
     if arguments.colors is not None:
-        config["colors"] = max(2, min(64, arguments.colors))
+        config["colors"] = max(
+            2,
+            min(64, arguments.colors)
+        )
 
     if arguments.detail is not None:
-        config["detail"] = max(1, min(100, arguments.detail))
+        config["detail"] = max(
+            1,
+            min(100, arguments.detail)
+        )
 
     if arguments.background:
         config["background"] = arguments.background
 
     if arguments.max_size is not None:
-        config["max_size"] = max(256, arguments.max_size)
+        config["max_size"] = max(
+            128,
+            arguments.max_size
+        )
 
     if arguments.min_area is not None:
-        config["min_area"] = max(0, arguments.min_area)
+        config["min_area"] = max(
+            0.1,
+            arguments.min_area
+        )
 
     if arguments.background_tolerance is not None:
         config["background_tolerance"] = max(
@@ -1188,11 +1558,17 @@ def apply_arguments(config, arguments):
 def main():
     enable_ansi()
     arguments = parse_arguments()
-    config = apply_arguments(load_config(), arguments)
+    config = apply_arguments(
+        load_config(),
+        arguments
+    )
 
     if arguments.inputs:
         os.makedirs(config["output"], exist_ok=True)
-        results = run_conversion(config, arguments.inputs)
+        results = run_conversion(
+            config,
+            arguments.inputs
+        )
 
         for path in results:
             print(path)
