@@ -1,249 +1,257 @@
 # SVGify
 
-🌐 **Язык:** [English](Readme.md) | [Русский](Readme_ru.md)
+🌐 [English](README.md) | **Русский**
 
-SVGify — консольный инструмент для преобразования логотипов из растровых изображений и других поддерживаемых источников в цветную векторную графику SVG.
+SVGify преобразует логотипы и растровые изображения в аккуратную цветную SVG-графику прямо из терминала.
 
-Он поддерживает интерактивный режим и командную строку, пакетную конвертацию, обработку папок и ZIP-архивов, удаление фона, сокращение палитры, сглаживание контуров и многоязычный интерфейс.
+Программа обрабатывает отдельные изображения, целые папки и ZIP-архивы. Она умеет удалять фон, сокращать цветовую палитру, сглаживать контуры и сохранять результат в редактируемом формате SVG.
 
-## Поддерживаемые форматы
+> Автоматическая трассировка не может восстановить детали, которых нет в исходном изображении. Лучший результат дают четкие фотографии высокого разрешения с равномерным освещением и простым фоном.
 
-- Изображения: PNG, JPG, JPEG, JFIF, WebP, BMP, GIF, TIFF, ICO, PPM, PGM, PBM, PNM, TGA
-- Современные форматы: HEIC, HEIF, AVIF
-- RAW-форматы: RAW, DNG, CR2, CR3, NEF, ARW, ORF, RW2, RAF, PEF, SRW
-- Документы и векторные файлы: PDF, SVG
-- Архивы: ZIP
-- Папки с поддерживаемыми файлами
+## Быстрый запуск
 
-Для PDF обрабатывается только первая страница, а для анимированных изображений — только первый кадр.
+```bash
+git clone https://github.com/Datvex/SVGify.git
+cd SVGify
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+python SVGify.py
+```
 
-## Возможности
-
-- Создание цветных SVG
-- Автоматическое или принудительное удаление фона
-- Настраиваемое количество цветов
-- Настраиваемая детализация контуров
-- Шумоподавление
-- Пакетная конвертация
-- Рекурсивная обработка папок
-- Обработка ZIP-архивов
-- Сохранение существующих SVG без повторной трассировки
-- Английский, русский и китайский интерфейс
-- Поддержка Windows, Linux и macOS
-- Интерактивный терминальный интерфейс
-- Полноценный режим командной строки
-
-## Важное ограничение
-
-Автоматическая трассировка не может восстановить скрытые детали или гарантировать математически идентичную копию любого логотипа.
-
-Качество результата зависит от:
-
-- Разрешения изображения
-- Освещения
-- Артефактов сжатия
-- Угла съемки и перспективы
-- Теней и отражений
-- Сложности фона
-- Сложности исходного логотипа
-
-Для получения лучшего результата используйте изображение высокого разрешения с четкими краями, равномерным освещением, минимальным сжатием, простым фоном и без перспективных искажений.
-
-## Требования
-
-- Python 3.10 или новее
-- pip
-- Для CairoSVG могут потребоваться системные библиотеки Cairo
+Пользователям Windows следует использовать инструкцию для PowerShell ниже.
 
 ## Установка
 
-Клонируйте репозиторий или скачайте его файлы, откройте папку проекта и создайте виртуальное окружение.
+Для работы SVGify требуется Python 3.10 или новее. Каждая инструкция ниже клонирует репозиторий, создает изолированное окружение, устанавливает все Python-зависимости из `requirements.txt` и запускает программу.
 
 ### Windows
 
+Откройте PowerShell и выполните:
+
 ```powershell
-python -m venv .venv
-.venv\Scripts\activate
+git clone https://github.com/Datvex/SVGify.git
+cd SVGify
+py -m venv .venv
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
+python SVGify.py
 ```
 
-### Linux и macOS
+Если команда `py` недоступна, замените ее на `python`. Git и Python можно установить через `winget`:
+
+```powershell
+winget install --id Git.Git -e
+winget install --id Python.Python.3.12 -e
+```
+
+После установки перезапустите PowerShell и выполните основные команды установки.
+
+### macOS
+
+Установите системные зависимости через Homebrew:
 
 ```bash
+brew install python git cairo libffi
+git clone https://github.com/Datvex/SVGify.git
+cd SVGify
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
+python SVGify.py
 ```
 
-### Ubuntu или Debian
+Если Homebrew еще не установлен:
 
-Для CairoSVG могут потребоваться дополнительные системные пакеты:
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+```
+
+### Ubuntu и Debian
 
 ```bash
 sudo apt update
-sudo apt install libcairo2 libffi-dev
+sudo apt install -y python3 python3-pip python3-venv git libcairo2 libffi-dev
+git clone https://github.com/Datvex/SVGify.git
+cd SVGify
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+python SVGify.py
 ```
 
-### macOS с Homebrew
+### Arch Linux и Manjaro
 
 ```bash
-brew install cairo libffi
+sudo pacman -Syu --needed python python-pip git cairo libffi
+git clone https://github.com/Datvex/SVGify.git
+cd SVGify
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+python SVGify.py
 ```
 
-## Интерактивный режим
+### Fedora
 
-Запустите `SVGify.py` без аргументов:
+```bash
+sudo dnf install -y python3 python3-pip git cairo libffi-devel
+git clone https://github.com/Datvex/SVGify.git
+cd SVGify
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+python SVGify.py
+```
+
+### openSUSE
+
+```bash
+sudo zypper install -y python3 python3-pip python3-virtualenv git cairo-devel libffi-devel
+git clone https://github.com/Datvex/SVGify.git
+cd SVGify
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+python SVGify.py
+```
+
+### Gentoo
+
+```bash
+sudo emerge --ask dev-lang/python dev-vcs/git x11-libs/cairo dev-libs/libffi
+git clone https://github.com/Datvex/SVGify.git
+cd SVGify
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+python SVGify.py
+```
+
+### Alpine Linux
+
+```bash
+sudo apk add python3 py3-pip py3-virtualenv git cairo-dev libffi-dev build-base
+git clone https://github.com/Datvex/SVGify.git
+cd SVGify
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+python SVGify.py
+```
+
+### Termux
+
+Устанавливайте Termux из F-Droid или GitHub. Версия из Google Play устарела.
+
+```bash
+pkg update
+pkg upgrade
+pkg install python git clang make pkg-config libffi cairo
+git clone https://github.com/Datvex/SVGify.git
+cd SVGify
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip setuptools wheel
+python -m pip install -r requirements.txt
+python SVGify.py
+```
+
+Некоторые библиотеки машинного обучения не публикуют официальные пакеты для Android. Если `onnxruntime` или `rembg` не устанавливаются в Termux, удаление фона через эти библиотеки будет недоступно, но встроенная обработка SVGify продолжит работать.
+
+## Использование
+
+Для запуска интерактивного интерфейса:
 
 ```bash
 python SVGify.py
 ```
 
-В интерактивном меню можно настроить:
-
-- Папку сохранения
-- Количество цветов
-- Детализацию контуров
-- Режим удаления фона
-- Язык интерфейса
-
-Пути можно вводить вручную или перетаскивать в окно совместимого терминала.
-
-## Режим командной строки
-
-Преобразовать одно изображение:
+Для преобразования одного изображения без открытия меню:
 
 ```bash
 python SVGify.py logo.png
 ```
 
-Преобразовать несколько файлов:
+Файлы, папки и ZIP-архивы можно передавать одновременно:
 
 ```bash
-python SVGify.py logo.png brand.jpg icon.webp
+python SVGify.py logo.png ./brand-assets icons.zip
 ```
 
-Рекурсивно обработать папку:
+Для выбора другой папки сохранения:
 
 ```bash
-python SVGify.py ./logos
+python SVGify.py logo.png --output ./output
 ```
 
-Обработать ZIP-архив:
-
-```bash
-python SVGify.py logos.zip
-```
-
-Выбрать папку сохранения:
-
-```bash
-python SVGify.py logo.png --output ./svg
-```
-
-Настроить векторизацию:
+Для настройки векторизации:
 
 ```bash
 python SVGify.py logo.png --colors 16 --detail 85 --background auto
 ```
 
-Отключить шумоподавление:
-
-```bash
-python SVGify.py logo.png --no-denoise
-```
-
-Обрабатывать большие изображения в повышенном внутреннем разрешении:
-
-```bash
-python SVGify.py logo.png --max-size 4000
-```
-
-Удалять мелкие фрагменты контуров:
-
-```bash
-python SVGify.py logo.png --min-area 12
-```
-
 ## Параметры командной строки
 
-```text
-inputs                  Файлы, папки или ZIP-архивы
--o, --output PATH       Папка сохранения
--c, --colors NUMBER     Количество цветов от 2 до 64
--d, --detail NUMBER     Детализация контуров от 1 до 100
--b, --background MODE   Режим фона: auto, on или off
---max-size NUMBER       Максимальный внутренний размер изображения
---min-area NUMBER       Минимальная площадь контура
---no-denoise            Отключить шумоподавление
-```
+| Параметр | Назначение |
+| --- | --- |
+| `inputs` | Изображения, папки или ZIP-архивы |
+| `-o`, `--output PATH` | Папка сохранения |
+| `-c`, `--colors NUMBER` | Количество цветов от 2 до 64 |
+| `-d`, `--detail NUMBER` | Детализация контуров от 1 до 100 |
+| `-b`, `--background MODE` | Режим фона: `auto`, `on` или `off` |
+| `--max-size NUMBER` | Максимальный размер изображения при обработке |
+| `--min-area NUMBER` | Минимальная площадь сохраняемого контура |
+| `--no-denoise` | Отключение шумоподавления |
 
-## Режимы удаления фона
+Режим `auto` удаляет фон только при необходимости. Используйте `on` для логотипа, снятого на сложной поверхности, и `off`, если фон должен остаться частью изображения.
 
-### `auto`
+## Поддерживаемые форматы
 
-Удаляет фон только при необходимости. Прозрачные изображения обычно сохраняют существующий альфа-канал.
+| Категория | Форматы |
+| --- | --- |
+| Обычные изображения | PNG, JPG, JPEG, JFIF, WebP, BMP, GIF, TIFF, ICO, TGA |
+| Portable maps | PPM, PGM, PBM, PNM |
+| Современные изображения | HEIC, HEIF, AVIF |
+| Камерные RAW-файлы | RAW, DNG, CR2, CR3, NEF, ARW, ORF, RW2, RAF, PEF, SRW |
+| Документы и векторы | PDF, SVG |
+| Архивы | ZIP |
 
-```bash
-python SVGify.py logo.png --background auto
-```
+Для PDF обрабатывается первая страница, а для анимированного изображения первый кадр. Папки сканируются рекурсивно.
 
-### `on`
+## Выбор настроек
 
-Всегда пытается удалить фон.
-
-```bash
-python SVGify.py photo.jpg --background on
-```
-
-### `off`
-
-Сохраняет исходный фон.
+Для простого плоского логотипа обычно достаточно от 4 до 8 цветов. Детализированной графике может потребоваться от 16 до 32 цветов, но большая палитра увеличивает размер SVG.
 
 ```bash
-python SVGify.py image.png --background off
+python SVGify.py logo.png --colors 8 --detail 75 --background auto
 ```
 
-## Рекомендуемые настройки
-
-### Простой плоский логотип
-
-```bash
-python SVGify.py logo.png --colors 6 --detail 80 --background auto
-```
-
-### Детализированный многоцветный логотип
-
-```bash
-python SVGify.py logo.png --colors 24 --detail 90 --background auto
-```
-
-### Логотип на сложной фотографии
+Для логотипа на сложной фотографии:
 
 ```bash
 python SVGify.py photo.jpg --colors 16 --detail 85 --background on
 ```
 
-### Более чистый и компактный SVG
+Для более компактного и чистого SVG уменьшите детализацию и удалите мелкие контуры:
 
 ```bash
 python SVGify.py logo.png --colors 8 --detail 60 --min-area 15
 ```
 
-## Результат
+## Результаты и конфигурация
 
-SVG-файлы сохраняются в выбранную папку.
-
-Папки по умолчанию:
-
-- Windows: `Downloads\SVGify`
-- Linux и macOS: `~/Downloads/SVGify`
-- Android-совместимые среды: `/storage/emulated/0/Download/SVGify`
-
-Существующие файлы не перезаписываются. SVGify добавляет числовой суффикс, например `_2` или `_3`.
-
-## Конфигурация
+По умолчанию результаты сохраняются в `Downloads/SVGify`. Существующие файлы не перезаписываются: при совпадении имени программа добавляет суффикс `_2`, `_3` и так далее.
 
 Настройки интерактивного режима хранятся в файле:
 
@@ -251,76 +259,22 @@ SVG-файлы сохраняются в выбранную папку.
 ~/.svgify_memory.json
 ```
 
-Чтобы восстановить настройки по умолчанию, удалите этот файл.
+Удалите этот файл, чтобы восстановить настройки по умолчанию.
 
 ## Решение проблем
 
-### Не открываются RAW-файлы
-
-Убедитесь, что установлен пакет `rawpy`:
+Если SVGify не открывает RAW, HEIC, PDF или SVG, сначала переустановите зависимости проекта внутри активного виртуального окружения:
 
 ```bash
-pip install --upgrade rawpy
+python -m pip install --upgrade -r requirements.txt
 ```
 
-### Не открываются HEIC или HEIF
+Для CairoSVG также может потребоваться системная библиотека Cairo. В приведенных выше инструкциях она устанавливается вместе с остальными системными пакетами.
 
-Установите или обновите Pillow HEIF:
-
-```bash
-pip install --upgrade pillow-heif
-```
-
-### Не открываются PDF
-
-Установите или обновите PyMuPDF:
-
-```bash
-pip install --upgrade pymupdf
-```
-
-### Не обрабатывается входной SVG
-
-Установите CairoSVG и необходимые системные библиотеки Cairo:
-
-```bash
-pip install --upgrade cairosvg
-```
-
-### Не работает удаление фона
-
-Установите или обновите пакеты удаления фона:
-
-```bash
-pip install --upgrade rembg onnxruntime
-```
-
-### В SVG слишком много мелких фигур
-
-Уменьшите детализацию или увеличьте минимальную площадь контура:
-
-```bash
-python SVGify.py logo.png --detail 60 --min-area 15
-```
-
-### Цвета выглядят слишком упрощенно
-
-Увеличьте количество цветов:
-
-```bash
-python SVGify.py logo.png --colors 24
-```
-
-### Обработка выполняется медленно
-
-Уменьшите внутренний размер изображения:
-
-```bash
-python SVGify.py logo.png --max-size 1600
-```
+Если SVG содержит слишком много мелких элементов, увеличьте `--min-area` или уменьшите `--detail`. Если цвета выглядят слишком упрощенно, увеличьте `--colors`. Уменьшение `--max-size` снижает расход памяти и ускоряет обработку.
 
 ## Лицензия
 
-SVGify распространяется на условиях **GNU General Public License v3.0**.
+SVGify распространяется на условиях [GNU General Public License v3.0](LICENSE).
 
-Полный текст лицензии находится в файле [LICENSE](LICENSE).
+Лицензия разрешает использовать, изучать, изменять и распространять проект при соблюдении ее условий.
