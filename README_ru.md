@@ -2,35 +2,23 @@
 
 🌐 [English](README.md) | **Русский**
 
-SVGify преобразует логотипы и растровые изображения в аккуратную цветную SVG-графику прямо из терминала.
+SVGify преобразует растровые логотипы и фотографии в цветную SVG-графику прямо из терминала. Для трассировки используется VTracer, поэтому проект не зависит от OpenCV.
 
-Программа обрабатывает отдельные изображения, целые папки и ZIP-архивы. Она умеет удалять фон, сокращать цветовую палитру, сглаживать контуры и сохранять результат в редактируемом формате SVG.
+Программа принимает отдельные изображения, папки, PDF, существующие SVG и ZIP-архивы. Удаление фона, сложность палитры, детализация контуров и фильтрация результата настраиваются через интерактивный интерфейс или параметры командной строки.
 
-> Автоматическая трассировка не может восстановить детали, которых нет в исходном изображении. Лучший результат дают четкие фотографии высокого разрешения с равномерным освещением и простым фоном.
-
-## Быстрый запуск
-
-```bash
-git clone https://github.com/Datvex/SVGify.git
-cd SVGify
-python -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-python SVGify.py
-```
-
-Пользователям Windows следует использовать инструкцию для PowerShell ниже.
+> Векторизация не может восстановить детали, отсутствующие в исходном изображении. Лучший результат дают четкие изображения с равномерным освещением, заметными границами и простым фоном.
 
 ## Установка
 
-Для работы SVGify требуется Python 3.10 или новее. Каждая инструкция ниже клонирует репозиторий, создает изолированное окружение, устанавливает все Python-зависимости из `requirements.txt` и запускает программу.
+Для работы SVGify требуется Python 3.10 или новее. Каждая инструкция ниже клонирует репозиторий, создает изолированное окружение, устанавливает зависимости из `requirements.txt` и запускает `SVGify.py`.
 
 ### Windows
 
-Откройте PowerShell и выполните:
+Откройте PowerShell:
 
 ```powershell
+winget install --id Git.Git -e
+winget install --id Python.Python.3.12 -e
 git clone https://github.com/Datvex/SVGify.git
 cd SVGify
 py -m venv .venv
@@ -41,21 +29,14 @@ python -m pip install -r requirements.txt
 python SVGify.py
 ```
 
-Если команда `py` недоступна, замените ее на `python`. Git и Python можно установить через `winget`:
-
-```powershell
-winget install --id Git.Git -e
-winget install --id Python.Python.3.12 -e
-```
-
-После установки перезапустите PowerShell и выполните основные команды установки.
+Если после установки команды Git или Python недоступны, перезапустите PowerShell. Если команда `py` отсутствует, замените ее на `python`.
 
 ### macOS
 
-Установите системные зависимости через Homebrew:
+Установите необходимые инструменты через Homebrew:
 
 ```bash
-brew install python git cairo libffi
+brew install python git
 git clone https://github.com/Datvex/SVGify.git
 cd SVGify
 python3 -m venv .venv
@@ -65,7 +46,7 @@ python -m pip install -r requirements.txt
 python SVGify.py
 ```
 
-Если Homebrew еще не установлен:
+Команда установки самого Homebrew:
 
 ```bash
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
@@ -75,7 +56,7 @@ python SVGify.py
 
 ```bash
 sudo apt update
-sudo apt install -y python3 python3-pip python3-venv git libcairo2 libffi-dev
+sudo apt install -y python3 python3-pip python3-venv git
 git clone https://github.com/Datvex/SVGify.git
 cd SVGify
 python3 -m venv .venv
@@ -88,7 +69,7 @@ python SVGify.py
 ### Arch Linux и Manjaro
 
 ```bash
-sudo pacman -Syu --needed python python-pip git cairo libffi
+sudo pacman -Syu --needed python python-pip git
 git clone https://github.com/Datvex/SVGify.git
 cd SVGify
 python -m venv .venv
@@ -101,7 +82,7 @@ python SVGify.py
 ### Fedora
 
 ```bash
-sudo dnf install -y python3 python3-pip git cairo libffi-devel
+sudo dnf install -y python3 python3-pip git
 git clone https://github.com/Datvex/SVGify.git
 cd SVGify
 python3 -m venv .venv
@@ -114,7 +95,7 @@ python SVGify.py
 ### openSUSE
 
 ```bash
-sudo zypper install -y python3 python3-pip python3-virtualenv git cairo-devel libffi-devel
+sudo zypper install -y python3 python3-pip python3-virtualenv git
 git clone https://github.com/Datvex/SVGify.git
 cd SVGify
 python3 -m venv .venv
@@ -127,7 +108,7 @@ python SVGify.py
 ### Gentoo
 
 ```bash
-sudo emerge --ask dev-lang/python dev-vcs/git x11-libs/cairo dev-libs/libffi
+sudo emerge --ask dev-lang/python dev-vcs/git
 git clone https://github.com/Datvex/SVGify.git
 cd SVGify
 python3 -m venv .venv
@@ -140,7 +121,7 @@ python SVGify.py
 ### Alpine Linux
 
 ```bash
-sudo apk add python3 py3-pip py3-virtualenv git cairo-dev libffi-dev build-base
+sudo apk add python3 py3-pip py3-virtualenv git build-base
 git clone https://github.com/Datvex/SVGify.git
 cd SVGify
 python3 -m venv .venv
@@ -152,12 +133,12 @@ python SVGify.py
 
 ### Termux
 
-Устанавливайте Termux из F-Droid или GitHub. Версия из Google Play устарела.
+Используйте актуальную версию Termux из F-Droid или GitHub. Версия из Google Play устарела.
 
 ```bash
 pkg update
 pkg upgrade
-pkg install python git clang make pkg-config libffi cairo
+pkg install python git rust clang make pkg-config libjpeg-turbo libpng libwebp libheif libraw
 git clone https://github.com/Datvex/SVGify.git
 cd SVGify
 python -m venv .venv
@@ -167,17 +148,17 @@ python -m pip install -r requirements.txt
 python SVGify.py
 ```
 
-Некоторые библиотеки машинного обучения не публикуют официальные пакеты для Android. Если `onnxruntime` или `rembg` не устанавливаются в Termux, удаление фона через эти библиотеки будет недоступно, но встроенная обработка SVGify продолжит работать.
+Некоторые Python-пакеты не выпускают официальные сборки для Android. На неподдерживаемых архитектурах Termux может потребоваться локальная компиляция VTracer, Pillow HEIF, RawPy или PyMuPDF.
 
 ## Использование
 
-Для запуска интерактивного интерфейса:
+Запуск интерактивного интерфейса:
 
 ```bash
 python SVGify.py
 ```
 
-Для преобразования одного изображения без открытия меню:
+Преобразование одного изображения без открытия меню:
 
 ```bash
 python SVGify.py logo.png
@@ -189,32 +170,40 @@ python SVGify.py logo.png
 python SVGify.py logo.png ./brand-assets icons.zip
 ```
 
-Для выбора другой папки сохранения:
+Выбор другой папки сохранения:
 
 ```bash
 python SVGify.py logo.png --output ./output
 ```
 
-Для настройки векторизации:
+Настройка цветов, детализации и удаления фона:
 
 ```bash
 python SVGify.py logo.png --colors 16 --detail 85 --background auto
+```
+
+Для фотографии со сложным фоном можно включить принудительное удаление:
+
+```bash
+python SVGify.py photo.jpg --background on --background-tolerance 38
 ```
 
 ## Параметры командной строки
 
 | Параметр | Назначение |
 | --- | --- |
-| `inputs` | Изображения, папки или ZIP-архивы |
+| `inputs` | Изображения, PDF, SVG, папки или ZIP-архивы |
 | `-o`, `--output PATH` | Папка сохранения |
-| `-c`, `--colors NUMBER` | Количество цветов от 2 до 64 |
+| `-c`, `--colors NUMBER` | Сложность цветов от 2 до 64 |
 | `-d`, `--detail NUMBER` | Детализация контуров от 1 до 100 |
 | `-b`, `--background MODE` | Режим фона: `auto`, `on` или `off` |
 | `--max-size NUMBER` | Максимальный размер изображения при обработке |
-| `--min-area NUMBER` | Минимальная площадь сохраняемого контура |
-| `--no-denoise` | Отключение шумоподавления |
+| `--min-area NUMBER` | Уровень фильтрации мелких элементов VTracer |
+| `--background-tolerance NUMBER` | Допуск цвета фона от 1 до 255 |
 
-Режим `auto` удаляет фон только при необходимости. Используйте `on` для логотипа, снятого на сложной поверхности, и `off`, если фон должен остаться частью изображения.
+Режим `auto` сохраняет имеющуюся прозрачность и удаляет только достаточно однородный фон, соединенный с краями изображения. Режим `on` всегда пытается удалить фон, а `off` передает VTracer исходное изображение.
+
+Удаление фона рассчитано на однотонные или почти однотонные поверхности. Оно намеренно не использует тяжелую модель машинного обучения и не выполняет семантическое выделение объектов.
 
 ## Поддерживаемые форматы
 
@@ -227,31 +216,35 @@ python SVGify.py logo.png --colors 16 --detail 85 --background auto
 | Документы и векторы | PDF, SVG |
 | Архивы | ZIP |
 
-Для PDF обрабатывается первая страница, а для анимированного изображения первый кадр. Папки сканируются рекурсивно.
+Существующие SVG копируются без повторной растеризации. Для PDF обрабатывается первая страница, а для анимированного изображения первый кадр. Папки сканируются рекурсивно.
+
+Поддержка конкретного формата изображения также зависит от кодеков Pillow, доступных на используемой платформе.
 
 ## Выбор настроек
 
-Для простого плоского логотипа обычно достаточно от 4 до 8 цветов. Детализированной графике может потребоваться от 16 до 32 цветов, но большая палитра увеличивает размер SVG.
+Для простого плоского логотипа обычно подходит невысокий уровень цветов и средняя или высокая детализация:
 
 ```bash
 python SVGify.py logo.png --colors 8 --detail 75 --background auto
 ```
 
-Для логотипа на сложной фотографии:
+Для детализированной графики можно увеличить уровень цветов:
 
 ```bash
-python SVGify.py photo.jpg --colors 16 --detail 85 --background on
+python SVGify.py artwork.png --colors 32 --detail 90 --background off
 ```
 
-Для более компактного и чистого SVG уменьшите детализацию и удалите мелкие контуры:
+Чтобы получить более чистый и компактный SVG, уменьшите детализацию и усильте фильтрацию мелких элементов:
 
 ```bash
-python SVGify.py logo.png --colors 8 --detail 60 --min-area 15
+python SVGify.py logo.png --colors 8 --detail 60 --min-area 12
 ```
+
+Параметр `--colors` управляет точностью цвета VTracer, а не задает строгое количество цветов. Итоговый SVG может содержать другое число оттенков.
 
 ## Результаты и конфигурация
 
-По умолчанию результаты сохраняются в `Downloads/SVGify`. Существующие файлы не перезаписываются: при совпадении имени программа добавляет суффикс `_2`, `_3` и так далее.
+По умолчанию результаты сохраняются в `Downloads/SVGify`. Существующие файлы не перезаписываются: при совпадении имени добавляется суффикс `_2`, `_3` и так далее.
 
 Настройки интерактивного режима хранятся в файле:
 
@@ -263,18 +256,20 @@ python SVGify.py logo.png --colors 8 --detail 60 --min-area 15
 
 ## Решение проблем
 
-Если SVGify не открывает RAW, HEIC, PDF или SVG, сначала переустановите зависимости проекта внутри активного виртуального окружения:
+Если отсутствует какой-либо модуль, переустановите все зависимости внутри активного виртуального окружения:
 
 ```bash
 python -m pip install --upgrade -r requirements.txt
 ```
 
-Для CairoSVG также может потребоваться системная библиотека Cairo. В приведенных выше инструкциях она устанавливается вместе с остальными системными пакетами.
+Если не открывается RAW, HEIC или PDF, проверьте, что пакеты `rawpy`, `pillow-heif` и `PyMuPDF` установились без ошибок.
 
-Если SVG содержит слишком много мелких элементов, увеличьте `--min-area` или уменьшите `--detail`. Если цвета выглядят слишком упрощенно, увеличьте `--colors`. Уменьшение `--max-size` снижает расход памяти и ускоряет обработку.
+Фон с тенями, градиентами или большим количеством цветов по краям может не удалиться в режиме `auto`. Используйте `--background on`, настройте `--background-tolerance` или заранее подготовьте изображение с прозрачным фоном.
+
+Если SVG содержит слишком много мелких путей, увеличьте `--min-area`. Если контуры слишком упрощены, увеличьте `--detail`. Уменьшение `--max-size` снижает расход памяти и ускоряет обработку.
 
 ## Лицензия
 
-SVGify распространяется на условиях [GNU General Public License v3.0](LICENSE).
+SVGify является свободным программным обеспечением и распространяется на условиях [GNU General Public License v3.0](LICENSE).
 
 Лицензия разрешает использовать, изучать, изменять и распространять проект при соблюдении ее условий.
