@@ -2086,6 +2086,90 @@ def show_floating_modal(title, items, bg_draw_func):
         sys.stdout.write("\033[?1006l\033[?1015l\033[?1003l\033[?1002l\033[?1000l\033[0m")
         sys.stdout.flush()
 
+def kilo_input(prompt, redraw_callback):
+    chars = []
+
+    try:
+        sys.stdout.write(f"{C_RESET}\033[?25l")
+        tw, bw, m = redraw_callback()
+
+        def draw_prompt():
+            prefix = f" {prompt} "
+            avail = max(1, bw - text_width(prefix))
+            disp = "".join(chars)
+
+            if text_width(disp) > avail:
+                while text_width(disp) > avail - 3 and disp:
+                    disp = disp[1:]
+                disp = "..." + disp
+
+            spaces = max(0, bw - text_width(prefix) - text_width(disp))
+
+            box_render = (
+                f"\r{m}{C_BLUE}▌"
+                f"{C_BG_INPUT}{C_GRAY}{prefix}"
+                f"{C_WHITE}{disp}"
+                f"{' ' * spaces}{C_RESET}"
+            )
+
+            sys.stdout.write(box_render)
+
+            if spaces > 0:
+                sys.stdout.write(f"\033[{spaces}D")
+
+            sys.stdout.flush()
+
+        draw_prompt()
+        sys.stdout.write(f"{C_WHITE}\033[?25h")
+        sys.stdout.flush()
+
+        last_size = get_term_width()
+
+        with RawInput():
+            while True:
+                ev = get_event()
+
+                curr_size = get_term_width()
+                if curr_size != last_size:
+                    last_size = curr_size
+                    sys.stdout.write(f"{C_RESET}\033[?25l")
+                    tw, bw, m = redraw_callback()
+                    sys.stdout.write(f"{C_WHITE}\033[?25h")
+                    draw_prompt()
+
+                if ev in ("LEFT", "RIGHT", "UP", "DOWN", "IGNORE"):
+                    continue
+
+                if ev == "ESC":
+                    sys.stdout.write(f"{C_RESET}\033[?25l")
+                    return "esc"
+
+                if ev == "ENTER":
+                    sys.stdout.write("\n")
+                    sys.stdout.flush()
+                    sys.stdout.write(f"{C_RESET}\033[?25l")
+                    return "".join(chars)
+
+                if ev == "BACKSPACE":
+                    if chars:
+                        chars.pop()
+                        draw_prompt()
+
+                elif isinstance(ev, str) and len(ev) == 1:
+                    chars.append(ev)
+                    draw_prompt()
+
+    except KeyboardInterrupt:
+        sys.stdout.write(f"{C_RESET}\033[?1049l\033[?25h\n")
+        sys.stdout.flush()
+        sys.exit(0)
+
+    except EOFError:
+        sys.stdout.write(f"{C_RESET}\033[?25l")
+        sys.stdout.flush()
+        return "esc"
+
+
 def settings_menu(config):
     while True:
         lang = config["lang"]
@@ -2392,10 +2476,11 @@ def main_menu(config):
                 width
             )
 
-        render_main_menu()
-        choice = ask(
+            return get_term_width(), width, margin
+
+        choice = kilo_input(
             translations["action"],
-            redraw=render_main_menu
+            render_main_menu
         )
 
         if choice == "1":
