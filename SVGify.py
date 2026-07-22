@@ -11,11 +11,17 @@ import argparse
 import urllib.parse
 import unicodedata
 import textwrap
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from collections import deque, defaultdict
 from xml.sax.saxutils import escape
 
 from PIL import Image, ImageOps, ImageFilter
+
+try:
+    import vtracer
+except ImportError:
+    vtracer = None
 
 C_BLUE = "\033[38;2;0;175;255m"
 C_YELLOW = "\033[38;2;248;246;117m"
@@ -709,12 +715,19 @@ def wait_return(text):
                 return
 
 def show_message(lang, title, message, color=C_YELLOW):
-    clear_screen(13)
-    draw_logo()
-    _, width, margin = get_layout()
-    draw_header(margin, width, title)
-    print_wrapped_text(message, margin, width, color)
-    wait_return(T[lang]["press_enter"])
+    def render_message():
+        clear_screen(13)
+        draw_logo()
+        terminal_width, width, margin = get_layout()
+        draw_header(margin, width, title)
+        print_wrapped_text(message, margin, width, color)
+        print()
+        return terminal_width, width, margin
+
+    kilo_input(
+        T[lang]["press_enter"],
+        render_message
+    )
 
 
 def clean_path(path):
@@ -794,7 +807,7 @@ def default_config():
         "colors": 12,
         "detail": 75,
         "background": "auto",
-        "max_size": 1600,
+        "max_size": 4096,
         "min_area": 8,
         "background_tolerance": 34
     }
@@ -1472,40 +1485,149 @@ def build_svg(image, original_width, original_height, config, title):
     )
 
 
-def vectorize_file(source, output_dir, config):
-    output_path = unique_output_path(
-        os.path.join(
-            output_dir,
-            f"{Path(source).stem}.svg"
+def analyze_vector_profile(image, config):
+    """Choose high-quality VTracer settings from the actual image content."""
+    sample = image.copy()
+    sample.thumbnail((320, 320), Image.Resampling.LANCZOS)
+    rgba = sample.convert("RGBA")
+    alpha = rgba.getchannel("A")
+    rgb = Image.new("RGB", rgba.size, (255, 255, 255))
+    rgb.paste(rgba.convert("RGB"), mask=alpha)
+
+    try:
+        reduced = rgb.quantize(
+            colors=32,
+            method=Image.Quantize.FASTOCTREE,
+            dither=Image.Dither.NONE
         )
+    except AttributeError:
+        reduced = rgb.quantize(colors=32, method=2, dither=0)
+
+    total = max(1, rgb.width * rgb.height)
+    significant = [
+        count
+        for count, _ in (reduced.getcolors(maxcolors=256) or [])
+        if count / total >= 0.002
+    ]
+    significant_colors = max(1, len(significant))
+    flat_logo = significant_colors <= max(6, min(16, int(config["colors"])))
+    detail = max(1, min(100, int(config["detail"])))
+
+    if flat_logo:
+        # Preserve hard corners and long straight logo edges. VTracer's spline
+        # fitter removes the pixel staircase while this profile avoids rounding
+        # intentional geometric corners.
+        return {
+            "colormode": "color",
+            "hierarchical": "stacked",
+            "mode": "spline",
+            "filter_speckle": max(0, min(16, int(round(config["min_area"] / 2)))),
+            "color_precision": 8,
+            "layer_difference": 4,
+            "corner_threshold": max(18, min(55, round(58 - detail * 0.38))),
+            "length_threshold": max(3.5, min(7.5, 7.5 - detail * 0.04)),
+            "max_iterations": 16,
+            "splice_threshold": max(12, min(50, round(62 - detail * 0.48))),
+            "path_precision": 5,
+        }
+
+    # Illustrations and shaded images need gentler clustering and smoother
+    # curves to avoid thousands of tiny paths.
+    return {
+        "colormode": "color",
+        "hierarchical": "stacked",
+        "mode": "spline",
+        "filter_speckle": max(2, min(16, int(round(config["min_area"] / 2)))),
+        "color_precision": max(5, min(8, round(5 + config["colors"] / 24))),
+        "layer_difference": max(8, min(32, round(34 - config["colors"] * 0.4))),
+        "corner_threshold": max(35, min(75, round(78 - detail * 0.3))),
+        "length_threshold": max(3.5, min(8.0, 8.0 - detail * 0.04)),
+        "max_iterations": 12,
+        "splice_threshold": max(20, min(60, round(68 - detail * 0.4))),
+        "path_precision": 4,
+    }
+
+
+def finalize_vtracer_svg(svg_path, original_width, original_height, title):
+    """Restore original dimensions and add accessible SVG metadata."""
+    tree = ET.parse(svg_path)
+    root = tree.getroot()
+    namespace = ""
+
+    if root.tag.startswith("{"):
+        namespace = root.tag.split("}", 1)[0][1:]
+
+    root.set("width", str(original_width))
+    root.set("height", str(original_height))
+    root.set("role", "img")
+    root.set("aria-label", title)
+
+    title_tag = f"{{{namespace}}}title" if namespace else "title"
+    existing_title = root.find(title_tag)
+
+    if existing_title is None:
+        existing_title = ET.Element(title_tag)
+        root.insert(0, existing_title)
+
+    existing_title.text = title
+    tree.write(svg_path, encoding="utf-8", xml_declaration=True)
+
+
+def vectorize_file(source, output_dir, config):
+    if vtracer is None:
+        raise RuntimeError(
+            "VTracer is not installed. Run: pip install -r requirements.txt"
+        )
+
+    output_path = unique_output_path(
+        os.path.join(output_dir, f"{Path(source).stem}.svg")
     )
 
     image = load_image(source)
-    image, original_width, original_height = resize_for_processing(
-        image,
-        int(config["max_size"])
-    )
+    original_width, original_height = image.size
+    image, _, _ = resize_for_processing(image, int(config["max_size"]))
     image = prepare_image(
         image,
         config["background"],
         int(config["background_tolerance"])
     )
+    profile = analyze_vector_profile(image, config)
 
-    svg = build_svg(
-        image,
-        original_width,
-        original_height,
-        config,
-        Path(source).stem
+    temporary_png = tempfile.NamedTemporaryFile(
+        prefix="svgify_vtracer_",
+        suffix=".png",
+        delete=False
     )
+    temporary_path = temporary_png.name
+    temporary_png.close()
 
-    with open(
-        output_path,
-        "w",
-        encoding="utf-8",
-        newline="\n"
-    ) as file:
-        file.write(svg)
+    try:
+        # PNG keeps alpha and edge coverage intact. No JPEG stage and no
+        # pre-quantization are used, so VTracer can recover subpixel edges.
+        image.save(temporary_path, format="PNG", optimize=False)
+        vtracer.convert_image_to_svg_py(
+            temporary_path,
+            output_path,
+            **profile
+        )
+        finalize_vtracer_svg(
+            output_path,
+            original_width,
+            original_height,
+            Path(source).stem
+        )
+    except Exception:
+        try:
+            if os.path.exists(output_path):
+                os.remove(output_path)
+        except Exception:
+            pass
+        raise
+    finally:
+        try:
+            os.remove(temporary_path)
+        except Exception:
+            pass
 
     return output_path
 
@@ -1623,52 +1745,62 @@ def run_conversion(config, raw_paths=None):
             shutil.rmtree(folder, ignore_errors=True)
 
     if raw_paths is None:
-        clear_screen(17)
-        draw_logo()
-        _, width, margin = get_layout()
-        title = (
-            translations["success"]
-            if results
-            else translations["failed"]
-        )
-        draw_header(margin, width, title)
+        def render_result_screen():
+            clear_screen(17)
+            draw_logo()
+            terminal_width, width, margin = get_layout()
+            title = (
+                translations["success"]
+                if results
+                else translations["failed"]
+            )
+            draw_header(margin, width, title)
 
-        if results:
-            print(
-                f"{margin}{C_GREEN}"
-                f"{translations['success_msg']}"
-                f"{C_RESET}"
-            )
-            print(
-                f"\n{margin}{C_BLUE}"
-                f"{translations['output_loc']}"
-                f"{C_RESET}"
-            )
-            print_wrapped_text(
-                config["output"],
-                margin,
-                width,
-                C_WHITE
-            )
-            print(f"\n{margin}{C_WHITE}{len(results)} SVG{C_RESET}")
-
-        if failures:
-            print(
-                f"\n{margin}{C_RED}"
-                f"{len(failures)} "
-                f"{translations['failed'].lower()}"
-                f"{C_RESET}"
-            )
-
-            for source, error in failures[:5]:
+            if results:
+                print(
+                    f"{margin}{C_GREEN}"
+                    f"{translations['success_msg']}"
+                    f"{C_RESET}"
+                )
+                print(
+                    f"\n{margin}{C_BLUE}"
+                    f"{translations['output_loc']}"
+                    f"{C_RESET}"
+                )
                 print_wrapped_text(
-                    f"{os.path.basename(source)}: {error}",
+                    config["output"],
                     margin,
                     width,
-                    C_GRAY
+                    C_WHITE
+                )
+                print(
+                    f"\n{margin}{C_WHITE}"
+                    f"{len(results)} SVG{C_RESET}"
                 )
 
-        wait_return(translations["press_enter"])
+            if failures:
+                print(
+                    f"\n{margin}{C_RED}"
+                    f"{len(failures)} "
+                    f"{translations['failed'].lower()}"
+                    f"{C_RESET}"
+                )
+
+                for source, error in failures[:5]:
+                    print_wrapped_text(
+                        f"{os.path.basename(source)}: {error}",
+                        margin,
+                        width,
+                        C_GRAY
+                    )
+
+            print()
+            return terminal_width, width, margin
+
+        kilo_input(
+            translations["press_enter"],
+            render_result_screen
+        )
 
     return results
 
@@ -2153,13 +2285,13 @@ def kilo_input(prompt, redraw_callback):
         sys.stdout.write(f"{C_WHITE}\033[?25h")
         sys.stdout.flush()
 
-        last_size = get_term_width()
+        last_size = get_term_size()
 
         with RawInput():
             while True:
                 ev = get_event()
 
-                curr_size = get_term_width()
+                curr_size = get_term_size()
                 if curr_size != last_size:
                     last_size = curr_size
                     sys.stdout.write(f"{C_RESET}\033[?25l")
