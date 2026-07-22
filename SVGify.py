@@ -220,12 +220,59 @@ def truncate_text(text, max_len):
     return result + "..."
 
 
-def get_term_width():
-    try:
-        return os.get_terminal_size().columns
-    except OSError:
-        return 80
+def get_term_size():
+    """Return the visible terminal viewport, not the Windows buffer size."""
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            from ctypes import wintypes
 
+            class COORD(ctypes.Structure):
+                _fields_ = [
+                    ("X", ctypes.c_short),
+                    ("Y", ctypes.c_short),
+                ]
+
+            class SMALL_RECT(ctypes.Structure):
+                _fields_ = [
+                    ("Left", ctypes.c_short),
+                    ("Top", ctypes.c_short),
+                    ("Right", ctypes.c_short),
+                    ("Bottom", ctypes.c_short),
+                ]
+
+            class CONSOLE_SCREEN_BUFFER_INFO(ctypes.Structure):
+                _fields_ = [
+                    ("dwSize", COORD),
+                    ("dwCursorPosition", COORD),
+                    ("wAttributes", wintypes.WORD),
+                    ("srWindow", SMALL_RECT),
+                    ("dwMaximumWindowSize", COORD),
+                ]
+
+            handle = ctypes.windll.kernel32.GetStdHandle(-11)
+            info = CONSOLE_SCREEN_BUFFER_INFO()
+
+            if ctypes.windll.kernel32.GetConsoleScreenBufferInfo(
+                handle,
+                ctypes.byref(info)
+            ):
+                columns = info.srWindow.Right - info.srWindow.Left + 1
+                lines = info.srWindow.Bottom - info.srWindow.Top + 1
+
+                if columns > 0 and lines > 0:
+                    return os.terminal_size((columns, lines))
+        except Exception:
+            pass
+
+    try:
+        return os.get_terminal_size(sys.stdout.fileno())
+    except (OSError, ValueError):
+        return shutil.get_terminal_size(fallback=(80, 24))
+
+
+def get_term_width():
+    return get_term_size().columns
 
 def get_layout():
     terminal_width = get_term_width()
@@ -238,7 +285,7 @@ def clear_screen(lines=18):
     sys.stdout.write(f"{C_RESET}\033[2J\033[H")
 
     try:
-        terminal_height = os.get_terminal_size().lines
+        terminal_height = get_term_size().lines
         padding = max(0, (terminal_height - lines) // 2)
 
         if padding:
@@ -387,15 +434,78 @@ def print_tip(text, margin, width):
     print()
 
 
-def ask(prompt):
+def ask(prompt, redraw=None):
+    prefix = (
+        f"{C_BLUE}▌{C_BG_INPUT}{C_GRAY} {prompt} "
+        f"{C_RESET}{C_WHITE}"
+    )
+
+    # On Windows, input() does not redraw the interface after a resize.
+    # Polling msvcrt lets us detect the new viewport and repaint immediately.
+    if (
+        sys.platform != "win32"
+        or not sys.stdin.isatty()
+        or not sys.stdout.isatty()
+    ):
+        try:
+            return input(prefix).strip()
+        finally:
+            sys.stdout.write(C_RESET)
+
+    import msvcrt
+
+    entered = []
+    previous_size = get_term_size()
+
+    def print_prompt():
+        sys.stdout.write(prefix + "".join(entered))
+        sys.stdout.flush()
+
+    print_prompt()
+
     try:
-        return input(
-            f"{C_BLUE}▌{C_BG_INPUT}{C_GRAY} {prompt} "
-            f"{C_RESET}{C_WHITE}"
-        ).strip()
+        while True:
+            current_size = get_term_size()
+
+            if current_size != previous_size:
+                previous_size = current_size
+
+                if redraw is not None:
+                    redraw()
+                    print_prompt()
+
+            if not msvcrt.kbhit():
+                time.sleep(0.03)
+                continue
+
+            char = msvcrt.getwch()
+
+            if char in ("\r", "\n"):
+                sys.stdout.write("\n")
+                return "".join(entered).strip()
+
+            if char == "\x03":
+                raise KeyboardInterrupt
+
+            if char == "\x08":
+                if entered:
+                    entered.pop()
+                    sys.stdout.write("\b \b")
+                    sys.stdout.flush()
+                continue
+
+            if char in ("\x00", "\xe0"):
+                if msvcrt.kbhit():
+                    msvcrt.getwch()
+                continue
+
+            if char.isprintable():
+                entered.append(char)
+                sys.stdout.write(char)
+                sys.stdout.flush()
     finally:
         sys.stdout.write(C_RESET)
-
+        sys.stdout.flush()
 
 def wait_return(text):
     try:
@@ -1228,18 +1338,24 @@ def run_conversion(config, raw_paths=None):
     translations = T[lang]
 
     if raw_paths is None:
-        clear_screen(14)
-        draw_logo()
-        _, width, margin = get_layout()
-        draw_header(margin, width, translations["input"])
-        print_wrapped_text(
-            translations["input_help"],
-            margin,
-            width,
-            C_GRAY
+        def render_input_screen():
+            clear_screen(14)
+            draw_logo()
+            _, width, margin = get_layout()
+            draw_header(margin, width, translations["input"])
+            print_wrapped_text(
+                translations["input_help"],
+                margin,
+                width,
+                C_GRAY
+            )
+            print()
+
+        render_input_screen()
+        raw = ask(
+            translations["path"],
+            redraw=render_input_screen
         )
-        print()
-        raw = ask(translations["path"])
         paths = split_paths(raw)
     else:
         paths = [
@@ -1360,79 +1476,89 @@ def settings_menu(config):
         lang = config["lang"]
         translations = T[lang]
 
-        clear_screen(22)
-        draw_logo()
-        _, width, margin = get_layout()
-        draw_header(margin, width, translations["settings"])
+        def render_settings():
+            clear_screen(22)
+            draw_logo()
+            _, width, margin = get_layout()
+            draw_header(margin, width, translations["settings"])
 
-        draw_menu_item(
-            margin,
-            "1",
-            translations["change_path"]
-        )
-        draw_menu_item(
-            margin,
-            "2",
-            translations["change_colors"]
-        )
-        draw_menu_item(
-            margin,
-            "3",
-            translations["change_detail"]
-        )
-        draw_menu_item(
-            margin,
-            "4",
-            translations["change_background"]
-        )
-        draw_menu_item(
-            margin,
-            "5",
-            translations["change_language"]
-        )
-        draw_menu_item(
-            margin,
-            "0",
-            translations["back"]
-        )
-
-        print()
-        draw_sys_item(
-            margin,
-            width,
-            translations["output_path"],
-            config["output"]
-        )
-        draw_sys_item(
-            margin,
-            width,
-            translations["colors"],
-            str(config["colors"])
-        )
-        draw_sys_item(
-            margin,
-            width,
-            translations["detail"],
-            str(config["detail"])
-        )
-        draw_sys_item(
-            margin,
-            width,
-            translations["background"],
-            translations.get(
-                config["background"],
-                config["background"]
+            draw_menu_item(
+                margin,
+                "1",
+                translations["change_path"]
             )
-        )
+            draw_menu_item(
+                margin,
+                "2",
+                translations["change_colors"]
+            )
+            draw_menu_item(
+                margin,
+                "3",
+                translations["change_detail"]
+            )
+            draw_menu_item(
+                margin,
+                "4",
+                translations["change_background"]
+            )
+            draw_menu_item(
+                margin,
+                "5",
+                translations["change_language"]
+            )
+            draw_menu_item(
+                margin,
+                "0",
+                translations["back"]
+            )
 
-        choice = ask(translations["action"])
+            print()
+            draw_sys_item(
+                margin,
+                width,
+                translations["output_path"],
+                config["output"]
+            )
+            draw_sys_item(
+                margin,
+                width,
+                translations["colors"],
+                str(config["colors"])
+            )
+            draw_sys_item(
+                margin,
+                width,
+                translations["detail"],
+                str(config["detail"])
+            )
+            draw_sys_item(
+                margin,
+                width,
+                translations["background"],
+                translations.get(
+                    config["background"],
+                    config["background"]
+                )
+            )
+
+        render_settings()
+        choice = ask(
+            translations["action"],
+            redraw=render_settings
+        )
 
         if choice == "0":
             save_config(config)
             return
 
         if choice == "1":
-            value = clean_path(ask(translations["new_path"]))
+            value = clean_path(
+                ask(
+                    translations["new_path"],
+                    redraw=render_settings
+                )
+            )
 
             if value:
                 try:
@@ -1442,7 +1568,10 @@ def settings_menu(config):
                     pass
 
         elif choice == "2":
-            value = ask(translations["new_colors"])
+            value = ask(
+                translations["new_colors"],
+                redraw=render_settings
+            )
 
             try:
                 config["colors"] = max(
@@ -1453,7 +1582,10 @@ def settings_menu(config):
                 pass
 
         elif choice == "3":
-            value = ask(translations["new_detail"])
+            value = ask(
+                translations["new_detail"],
+                redraw=render_settings
+            )
 
             try:
                 config["detail"] = max(
@@ -1471,18 +1603,24 @@ def settings_menu(config):
             ]
 
         elif choice == "5":
-            clear_screen(14)
-            draw_logo()
-            _, width, margin = get_layout()
-            draw_header(
-                margin,
-                width,
-                translations["language"]
+            def render_language():
+                clear_screen(14)
+                draw_logo()
+                _, width, margin = get_layout()
+                draw_header(
+                    margin,
+                    width,
+                    translations["language"]
+                )
+                draw_menu_item(margin, "1", "English")
+                draw_menu_item(margin, "2", "Русский")
+                draw_menu_item(margin, "3", "中文")
+
+            render_language()
+            selected = ask(
+                translations["action"],
+                redraw=render_language
             )
-            draw_menu_item(margin, "1", "English")
-            draw_menu_item(margin, "2", "Русс��ий")
-            draw_menu_item(margin, "3", "中文")
-            selected = ask(translations["action"])
             mapping = {"1": "en", "2": "ru", "3": "zh"}
 
             if selected in mapping:
@@ -1490,82 +1628,87 @@ def settings_menu(config):
 
         save_config(config)
 
-
 def main_menu(config):
     while True:
         lang = config["lang"]
         translations = T[lang]
 
-        clear_screen(20)
-        draw_logo()
-        _, width, margin = get_layout()
-        draw_header(
-            margin,
-            width,
-            translations["commands"]
-        )
-
-        print(
-            f"{margin}{C_BLUE}"
-            f"{translations['actions']}"
-            f"{C_RESET}"
-        )
-        draw_menu_item(
-            margin,
-            "1",
-            translations["start"]
-        )
-        draw_menu_item(
-            margin,
-            "2",
-            translations["settings"]
-        )
-        draw_menu_item(
-            margin,
-            "0",
-            translations["exit"]
-        )
-        print()
-
-        print(
-            f"{margin}{C_BLUE}"
-            f"{translations['system']}"
-            f"{C_RESET}"
-        )
-        draw_sys_item(
-            margin,
-            width,
-            translations["output_path"],
-            config["output"]
-        )
-        draw_sys_item(
-            margin,
-            width,
-            translations["colors"],
-            str(config["colors"])
-        )
-        draw_sys_item(
-            margin,
-            width,
-            translations["detail"],
-            str(config["detail"])
-        )
-        draw_sys_item(
-            margin,
-            width,
-            translations["background"],
-            translations.get(
-                config["background"],
-                config["background"]
+        def render_main_menu():
+            clear_screen(20)
+            draw_logo()
+            _, width, margin = get_layout()
+            draw_header(
+                margin,
+                width,
+                translations["commands"]
             )
-        )
 
-        print_tip(
-            translations["tip_main"],
-            margin,
-            width
+            print(
+                f"{margin}{C_BLUE}"
+                f"{translations['actions']}"
+                f"{C_RESET}"
+            )
+            draw_menu_item(
+                margin,
+                "1",
+                translations["start"]
+            )
+            draw_menu_item(
+                margin,
+                "2",
+                translations["settings"]
+            )
+            draw_menu_item(
+                margin,
+                "0",
+                translations["exit"]
+            )
+            print()
+
+            print(
+                f"{margin}{C_BLUE}"
+                f"{translations['system']}"
+                f"{C_RESET}"
+            )
+            draw_sys_item(
+                margin,
+                width,
+                translations["output_path"],
+                config["output"]
+            )
+            draw_sys_item(
+                margin,
+                width,
+                translations["colors"],
+                str(config["colors"])
+            )
+            draw_sys_item(
+                margin,
+                width,
+                translations["detail"],
+                str(config["detail"])
+            )
+            draw_sys_item(
+                margin,
+                width,
+                translations["background"],
+                translations.get(
+                    config["background"],
+                    config["background"]
+                )
+            )
+
+            print_tip(
+                translations["tip_main"],
+                margin,
+                width
+            )
+
+        render_main_menu()
+        choice = ask(
+            translations["action"],
+            redraw=render_main_menu
         )
-        choice = ask(translations["action"])
 
         if choice == "1":
             run_conversion(config)
@@ -1573,7 +1716,6 @@ def main_menu(config):
             settings_menu(config)
         elif choice == "0":
             return
-
 
 def parse_arguments():
     parser = argparse.ArgumentParser(prog="SVGify")
