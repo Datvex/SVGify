@@ -27,6 +27,8 @@ C_RED = "\033[38;2;255;100;100m"
 C_BOLD = "\033[1m"
 C_RESET = "\033[0m"
 C_BG_INPUT = "\033[48;2;45;45;45m"
+C_LOGO = "\033[38;2;248;246;117m"   # #F8F675
+C_LOGO_SHADOW = "\033[38;2;90;90;40m"  # #5A5A28
 
 SUPPORTED_EXTS = {
     ".png", ".jpg", ".jpeg", ".jfif", ".webp", ".bmp", ".dib",
@@ -260,23 +262,98 @@ def print_wrapped_text(text, margin, width, color=C_GRAY):
 
 
 def draw_logo():
+    # Каждый символ хранит два вертикальных «пикселя»:
+    # ▀ — верхний, ▄ — нижний, █ — оба.
     logo = [
-        "███████ ██    ██  ██████  ██ ███████ ██    ██",
-        "██      ██    ██ ██       ██ ██       ██    ██",
-        "███████  ██  ██  ██   ███ ██ █████     ████  ",
-        "     ██   ████   ██    ██ ██ ██         ██   ",
-        "███████    ██     ██████  ██ ██         ██   "
+        "▄███████  ████  ████ ███████▄  ▀███▀ ███████▄ ███   ███",
+        "▀████▄     ███  ███  ███        ███  ███      ███▄ ▄███",
+        "  ▀▀███▄▄  ███  ███  ███  ▄▄▄▄  ███  █████     ▀█████▀",
+        "▄▄▄▄▄████  ████████  ███▄▄███   ███  ███         ███",
+        "███████▀    ▀████▀   ▀██████▀  █████ ███         ███",
     ]
 
+    def decode_half_blocks(lines):
+        width = max(text_width(line) for line in lines)
+        pixels = []
+
+        for line in lines:
+            line = line.ljust(width)
+            upper = []
+            lower = []
+
+            for char in line:
+                upper.append(char in ("▀", "█"))
+                lower.append(char in ("▄", "█"))
+
+            pixels.append(upper)
+            pixels.append(lower)
+
+        return pixels, width
+
+    def color_code(color, background=False):
+        prefix = 48 if background else 38
+        return f"\033[{prefix};2;{color[0]};{color[1]};{color[2]}m"
+
+    def render_pair(upper, lower):
+        if upper is None and lower is None:
+            return " "
+
+        if upper == lower:
+            return f"{color_code(upper)}█{C_RESET}"
+
+        if upper is None:
+            return f"{color_code(lower)}▄{C_RESET}"
+
+        if lower is None:
+            return f"{color_code(upper)}▀{C_RESET}"
+
+        return (
+            f"{color_code(upper)}"
+            f"{color_code(lower, background=True)}"
+            f"▀{C_RESET}"
+        )
+
+    source, logo_width = decode_half_blocks(logo)
+    pixel_height = len(source) + 1
+    composed = []
+
+    # Сначала строим тень со смещением на один полупиксель вниз,
+    # затем накладываем сверху жёлтую надпись.
+    for y in range(pixel_height):
+        row = []
+
+        for x in range(logo_width):
+            has_logo = y < len(source) and source[y][x]
+            has_shadow = y > 0 and source[y - 1][x]
+
+            if has_logo:
+                row.append((248, 246, 117))
+            elif has_shadow:
+                row.append((90, 90, 40))
+            else:
+                row.append(None)
+
+        composed.append(row)
+
     terminal_width = get_term_width()
-    print()
-
-    for line in logo:
-        margin = " " * max(0, (terminal_width - len(line)) // 2)
-        print(f"{margin}{C_YELLOW}{line}{C_RESET}")
+    margin = " " * max(0, (terminal_width - logo_width) // 2)
 
     print()
 
+    for y in range(0, pixel_height, 2):
+        upper = composed[y]
+        lower = (
+            composed[y + 1]
+            if y + 1 < pixel_height
+            else [None] * logo_width
+        )
+        rendered = "".join(
+            render_pair(upper[x], lower[x])
+            for x in range(logo_width)
+        ).rstrip()
+        print(f"{margin}{rendered}{C_RESET}")
+
+    print()
 
 def draw_header(margin, width, title):
     spaces = " " * max(1, width - text_width(title))
@@ -1403,7 +1480,7 @@ def settings_menu(config):
                 translations["language"]
             )
             draw_menu_item(margin, "1", "English")
-            draw_menu_item(margin, "2", "Русский")
+            draw_menu_item(margin, "2", "Русс��ий")
             draw_menu_item(margin, "3", "中文")
             selected = ask(translations["action"])
             mapping = {"1": "en", "2": "ru", "3": "zh"}
