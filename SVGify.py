@@ -575,9 +575,11 @@ def draw_logo():
     print()
 
 def draw_header(margin, width, title):
-    spaces = " " * max(1, width - text_width(title))
-    print(f"{margin}{C_WHITE}{C_BOLD}{title}{C_RESET}{spaces}\n")
-
+    spaces = " " * max(1, width - text_width(title) - 3)
+    print(
+        f"{margin}{C_WHITE}{C_BOLD}{title}{C_RESET}"
+        f"{spaces}{C_GRAY}esc{C_RESET}\n"
+    )
 
 def draw_menu_item(margin, number, text):
     print(f"{margin}{C_YELLOW}{number}{C_RESET}  {C_WHITE}{text}{C_RESET}")
@@ -680,11 +682,31 @@ def ask(prompt, redraw=None):
         sys.stdout.flush()
 
 def wait_return(text):
-    try:
-        input(f"\n{C_GRAY}{text}:{C_RESET} ")
-    except EOFError:
-        pass
+    _, width, margin = get_layout()
+    prefix = f" {text}: "
+    spaces = " " * max(0, width - text_width(prefix))
 
+    sys.stdout.write(
+        f"\n{margin}{C_BLUE}▌"
+        f"{C_BG_INPUT}{C_GRAY}{prefix}"
+        f"{spaces}{C_RESET}"
+    )
+    sys.stdout.flush()
+
+    if not sys.stdin.isatty():
+        try:
+            input()
+        except EOFError:
+            pass
+        return
+
+    with RawInput():
+        while True:
+            event = get_event()
+            if event in ("ENTER", "ESC"):
+                sys.stdout.write(f"{C_RESET}\033[?25l")
+                sys.stdout.flush()
+                return
 
 def show_message(lang, title, message, color=C_YELLOW):
     clear_screen(13)
@@ -1523,11 +1545,19 @@ def run_conversion(config, raw_paths=None):
             )
             print()
 
-        render_input_screen()
-        raw = ask(
+        def redraw_input_screen():
+            render_input_screen()
+            terminal_width, width, margin = get_layout()
+            return terminal_width, width, margin
+
+        raw = kilo_input(
             translations["path"],
-            redraw=render_input_screen
+            redraw_input_screen
         )
+
+        if raw == "esc":
+            return []
+
         paths = split_paths(raw)
     else:
         paths = [
@@ -2176,7 +2206,7 @@ def settings_menu(config):
         translations = T[lang]
 
         def draw_background():
-            clear_screen(20)
+            clear_screen(16)
             draw_logo()
             _, width, margin = get_layout()
             draw_header(
@@ -2200,45 +2230,7 @@ def settings_menu(config):
                 "2",
                 translations["settings"]
             )
-            draw_menu_item(
-                margin,
-                "0",
-                translations["exit"]
-            )
-            print()
 
-            print(
-                f"{margin}{C_BLUE}"
-                f"{translations['system']}"
-                f"{C_RESET}"
-            )
-            draw_sys_item(
-                margin,
-                width,
-                translations["output_path"],
-                config["output"]
-            )
-            draw_sys_item(
-                margin,
-                width,
-                translations["colors"],
-                str(config["colors"])
-            )
-            draw_sys_item(
-                margin,
-                width,
-                translations["detail"],
-                str(config["detail"])
-            )
-            draw_sys_item(
-                margin,
-                width,
-                translations["background"],
-                translations.get(
-                    config["background"],
-                    config["background"]
-                )
-            )
             print_tip(
                 translations["tip_main"],
                 margin,
@@ -2302,22 +2294,25 @@ def settings_menu(config):
         def draw_setting_input():
             clear_screen(14)
             draw_logo()
-            _, width, margin = get_layout()
+            terminal_width, width, margin = get_layout()
             draw_header(
                 margin,
                 width,
                 translations["settings"]
             )
             print()
+            return terminal_width, width, margin
 
         if choice == "path":
-            draw_setting_input()
-            value = clean_path(
-                ask(
-                    translations["new_path"],
-                    redraw=draw_setting_input
-                )
+            raw_value = kilo_input(
+                translations["new_path"],
+                draw_setting_input
             )
+
+            if raw_value == "esc":
+                continue
+
+            value = clean_path(raw_value)
 
             if value:
                 try:
@@ -2327,11 +2322,13 @@ def settings_menu(config):
                     pass
 
         elif choice == "colors":
-            draw_setting_input()
-            value = ask(
+            value = kilo_input(
                 translations["new_colors"],
-                redraw=draw_setting_input
+                draw_setting_input
             )
+
+            if value == "esc":
+                continue
 
             try:
                 config["colors"] = max(
@@ -2342,11 +2339,13 @@ def settings_menu(config):
                 pass
 
         elif choice == "detail":
-            draw_setting_input()
-            value = ask(
+            value = kilo_input(
                 translations["new_detail"],
-                redraw=draw_setting_input
+                draw_setting_input
             )
+
+            if value == "esc":
+                continue
 
             try:
                 config["detail"] = max(
@@ -2406,9 +2405,9 @@ def main_menu(config):
         translations = T[lang]
 
         def render_main_menu():
-            clear_screen(20)
+            clear_screen(16)
             draw_logo()
-            _, width, margin = get_layout()
+            terminal_width, width, margin = get_layout()
             draw_header(
                 margin,
                 width,
@@ -2430,45 +2429,6 @@ def main_menu(config):
                 "2",
                 translations["settings"]
             )
-            draw_menu_item(
-                margin,
-                "0",
-                translations["exit"]
-            )
-            print()
-
-            print(
-                f"{margin}{C_BLUE}"
-                f"{translations['system']}"
-                f"{C_RESET}"
-            )
-            draw_sys_item(
-                margin,
-                width,
-                translations["output_path"],
-                config["output"]
-            )
-            draw_sys_item(
-                margin,
-                width,
-                translations["colors"],
-                str(config["colors"])
-            )
-            draw_sys_item(
-                margin,
-                width,
-                translations["detail"],
-                str(config["detail"])
-            )
-            draw_sys_item(
-                margin,
-                width,
-                translations["background"],
-                translations.get(
-                    config["background"],
-                    config["background"]
-                )
-            )
 
             print_tip(
                 translations["tip_main"],
@@ -2476,19 +2436,19 @@ def main_menu(config):
                 width
             )
 
-            return get_term_width(), width, margin
+            return terminal_width, width, margin
 
         choice = kilo_input(
             translations["action"],
             render_main_menu
         )
 
-        if choice == "1":
+        if choice == "esc":
+            continue
+        elif choice == "1":
             run_conversion(config)
         elif choice == "2":
             settings_menu(config)
-        elif choice == "0":
-            return
 
 def parse_arguments():
     parser = argparse.ArgumentParser(prog="SVGify")
