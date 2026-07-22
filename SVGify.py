@@ -30,6 +30,26 @@ C_BG_INPUT = "\033[48;2;45;45;45m"
 C_LOGO = "\033[38;2;248;246;117m"   # #F8F675
 C_LOGO_SHADOW = "\033[38;2;90;90;40m"  # #5A5A28
 
+COLOR_NORMAL = {
+    "blue": "\033[38;2;0;175;255m",
+    "yellow": "\033[38;2;248;246;117m",
+    "gray": "\033[38;2;110;110;110m",
+    "white": "\033[38;2;210;210;210m",
+    "dark_gray": "\033[38;2;80;80;80m",
+    "bold": "\033[1m",
+    "bg_input": "\033[48;2;45;45;45m"
+}
+
+COLOR_DIM = {
+    "blue": "\033[38;2;0;65;95m",
+    "yellow": "\033[38;2;95;94;45m",
+    "gray": "\033[38;2;42;42;42m",
+    "white": "\033[38;2;78;78;78m",
+    "dark_gray": "\033[38;2;28;28;28m",
+    "bold": "",
+    "bg_input": "\033[48;2;22;22;22m"
+}
+
 SUPPORTED_EXTS = {
     ".png", ".jpg", ".jpeg", ".jfif", ".webp", ".bmp", ".dib",
     ".gif", ".tif", ".tiff", ".ico", ".ppm", ".pgm", ".pbm",
@@ -44,6 +64,113 @@ IGNORE_DIRS = {
 }
 
 MEMORY_FILE = Path.home() / ".svgify_memory.json"
+
+old_mode_in = None
+old_mode_out = None
+win32_available = False
+win_mouse_left_down = False
+_input_queue = []
+
+if sys.platform == "win32":
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.windll.kernel32
+
+    STD_INPUT_HANDLE = -10
+    STD_OUTPUT_HANDLE = -11
+    ENABLE_WINDOW_INPUT = 0x0008
+    ENABLE_MOUSE_INPUT = 0x0010
+    ENABLE_QUICK_EDIT_MODE = 0x0040
+    ENABLE_EXTENDED_FLAGS = 0x0080
+    ENABLE_VIRTUAL_TERMINAL_INPUT = 0x0200
+    ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004
+
+    KEY_EVENT = 0x0001
+    MOUSE_EVENT = 0x0002
+    MOUSE_MOVED = 0x0001
+    DOUBLE_CLICK = 0x0002
+    MOUSE_WHEELED = 0x0004
+    MOUSE_HWHEELED = 0x0008
+    FROM_LEFT_1ST_BUTTON_PRESSED = 0x0001
+
+    VK_BACK = 0x08
+    VK_RETURN = 0x0D
+    VK_ESCAPE = 0x1B
+    VK_UP = 0x26
+    VK_DOWN = 0x28
+    VK_C = 0x43
+
+    LEFT_CTRL_PRESSED = 0x0008
+    RIGHT_CTRL_PRESSED = 0x0004
+
+    class COORD(ctypes.Structure):
+        _fields_ = [("X", ctypes.c_short), ("Y", ctypes.c_short)]
+
+    class KEY_EVENT_RECORD(ctypes.Structure):
+        _fields_ = [
+            ("bKeyDown", wintypes.BOOL),
+            ("wRepeatCount", wintypes.WORD),
+            ("wVirtualKeyCode", wintypes.WORD),
+            ("wVirtualScanCode", wintypes.WORD),
+            ("uChar", wintypes.WCHAR),
+            ("dwControlKeyState", wintypes.DWORD)
+        ]
+
+    class MOUSE_EVENT_RECORD(ctypes.Structure):
+        _fields_ = [
+            ("dwMousePosition", COORD),
+            ("dwButtonState", wintypes.DWORD),
+            ("dwControlKeyState", wintypes.DWORD),
+            ("dwEventFlags", wintypes.DWORD)
+        ]
+
+    class EVENT_UNION(ctypes.Union):
+        _fields_ = [
+            ("KeyEvent", KEY_EVENT_RECORD),
+            ("MouseEvent", MOUSE_EVENT_RECORD)
+        ]
+
+    class INPUT_RECORD(ctypes.Structure):
+        _fields_ = [
+            ("EventType", wintypes.WORD),
+            ("Event", EVENT_UNION)
+        ]
+
+    hStdIn = kernel32.GetStdHandle(STD_INPUT_HANDLE)
+    hStdOut = kernel32.GetStdHandle(STD_OUTPUT_HANDLE)
+
+    mode = ctypes.c_uint32()
+    if kernel32.GetConsoleMode(hStdIn, ctypes.byref(mode)):
+        old_mode_in = mode.value
+        new_mode = mode.value
+        new_mode &= ~ENABLE_QUICK_EDIT_MODE
+        new_mode &= ~ENABLE_VIRTUAL_TERMINAL_INPUT
+        new_mode |= ENABLE_EXTENDED_FLAGS
+        new_mode |= ENABLE_MOUSE_INPUT
+        new_mode |= ENABLE_WINDOW_INPUT
+        kernel32.SetConsoleMode(hStdIn, new_mode)
+        win32_available = True
+
+    mode_out = ctypes.c_uint32()
+    if kernel32.GetConsoleMode(hStdOut, ctypes.byref(mode_out)):
+        old_mode_out = mode_out.value
+        kernel32.SetConsoleMode(hStdOut, mode_out.value | ENABLE_VIRTUAL_TERMINAL_PROCESSING)
+
+    kernel32.GetNumberOfConsoleInputEvents.argtypes = [
+        wintypes.HANDLE,
+        ctypes.POINTER(wintypes.DWORD)
+    ]
+    kernel32.GetNumberOfConsoleInputEvents.restype = wintypes.BOOL
+    kernel32.ReadConsoleInputW.argtypes = [
+        wintypes.HANDLE,
+        ctypes.POINTER(INPUT_RECORD),
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD)
+    ]
+    kernel32.ReadConsoleInputW.restype = wintypes.BOOL
+    kernel32.FlushConsoleInputBuffer.argtypes = [wintypes.HANDLE]
+    kernel32.FlushConsoleInputBuffer.restype = wintypes.BOOL
 
 T = {
     "en": {
@@ -161,26 +288,64 @@ T = {
 
 
 def enable_ansi():
-    if sys.platform == "win32":
+    # Win32 console modes are initialized once above, exactly as in file CLI.
+    if sys.platform == "win32" and old_mode_out is None:
         try:
             import ctypes
-            kernel32 = ctypes.windll.kernel32
-            handle = kernel32.GetStdHandle(-11)
+            handle = ctypes.windll.kernel32.GetStdHandle(-11)
             mode = ctypes.c_uint32()
-
-            if kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
-                kernel32.SetConsoleMode(handle, mode.value | 0x0004)
+            if ctypes.windll.kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+                ctypes.windll.kernel32.SetConsoleMode(handle, mode.value | 0x0004)
         except Exception:
             pass
 
 
 def restore_console():
-    sys.stdout.write(f"{C_RESET}\033[?25h")
-    sys.stdout.flush()
+    try:
+        sys.stdout.write(
+            f"{C_RESET}"
+            "\033[?1006l\033[?1015l\033[?1003l"
+            "\033[?1002l\033[?1000l\033[?25h"
+        )
+        sys.stdout.flush()
+    except Exception:
+        pass
+
+    if sys.platform == "win32" and old_mode_in is not None:
+        kernel32.SetConsoleMode(hStdIn, old_mode_in)
+        if old_mode_out is not None:
+            kernel32.SetConsoleMode(hStdOut, old_mode_out)
 
 
 atexit.register(restore_console)
 
+
+def set_color_mode(dimmed=False):
+    global C_BLUE, C_YELLOW, C_GRAY, C_WHITE, C_DARK_GRAY, C_BOLD, C_BG_INPUT
+    palette = COLOR_DIM if dimmed else COLOR_NORMAL
+    C_BLUE = palette["blue"]
+    C_YELLOW = palette["yellow"]
+    C_GRAY = palette["gray"]
+    C_WHITE = palette["white"]
+    C_DARK_GRAY = palette["dark_gray"]
+    C_BOLD = palette["bold"]
+    C_BG_INPUT = palette["bg_input"]
+
+
+class RawInput:
+    def __enter__(self):
+        if sys.platform != "win32":
+            import tty
+            import termios
+            self.fd = sys.stdin.fileno()
+            self.old = termios.tcgetattr(self.fd)
+            tty.setcbreak(self.fd)
+        return self
+
+    def __exit__(self, *args):
+        if sys.platform != "win32":
+            import termios
+            termios.tcsetattr(self.fd, termios.TCSADRAIN, self.old)
 
 def char_width(ch):
     if unicodedata.combining(ch):
@@ -360,6 +525,13 @@ def draw_logo():
             f"▀{C_RESET}"
         )
 
+    if C_YELLOW == COLOR_DIM["yellow"]:
+        logo_color = (95, 94, 45)
+        shadow_color = (34, 34, 16)
+    else:
+        logo_color = (248, 246, 117)
+        shadow_color = (90, 90, 40)
+
     source, logo_width = decode_half_blocks(logo)
     pixel_height = len(source) + 1
     composed = []
@@ -374,9 +546,9 @@ def draw_logo():
             has_shadow = y > 0 and source[y - 1][x]
 
             if has_logo:
-                row.append((248, 246, 117))
+                row.append(logo_color)
             elif has_shadow:
-                row.append((90, 90, 40))
+                row.append(shadow_color)
             else:
                 row.append(None)
 
@@ -1471,49 +1643,491 @@ def run_conversion(config, raw_paths=None):
     return results
 
 
+def pad_text(text, width):
+    return str(text) + " " * max(0, width - text_width(text))
+
+
+def flush_input_events():
+    global win_mouse_left_down, _input_queue
+    win_mouse_left_down = False
+
+    if sys.platform == "win32" and win32_available:
+        kernel32.FlushConsoleInputBuffer(hStdIn)
+    elif sys.platform == "win32":
+        try:
+            import msvcrt
+            while msvcrt.kbhit():
+                msvcrt.getwch()
+        except Exception:
+            pass
+    else:
+        _input_queue.clear()
+        try:
+            import select
+            while True:
+                r, _, _ = select.select([sys.stdin], [], [], 0)
+                if not r:
+                    break
+                os.read(sys.stdin.fileno(), 4096)
+        except Exception:
+            pass
+
+
+def parse_vt_sequence(seq):
+    if seq == "\x1b[A":
+        return "UP"
+    if seq == "\x1b[B":
+        return "DOWN"
+    if seq == "\x1b[C":
+        return "RIGHT"
+    if seq == "\x1b[D":
+        return "LEFT"
+
+    if seq.startswith("\x1b[<") and seq.endswith(("M", "m")):
+        parts = seq[3:-1].split(";")
+        if len(parts) == 3:
+            try:
+                cb = int(parts[0])
+                cx = int(parts[1])
+                cy = int(parts[2])
+                final = seq[-1]
+
+                if cb & 64:
+                    return "IGNORE"
+
+                if final == "M":
+                    if cb & 32:
+                        return ("HOVER", cx, cy)
+                    if (cb & 3) == 0:
+                        return ("CLICK", cx, cy)
+                    return ("HOVER", cx, cy)
+
+                return "IGNORE"
+            except ValueError:
+                pass
+
+    if seq.startswith("\x1b[M") and len(seq) >= 6:
+        try:
+            cb = ord(seq[3]) - 32
+            cx = ord(seq[4]) - 32
+            cy = ord(seq[5]) - 32
+
+            if cb & 64:
+                return "IGNORE"
+            if cb & 32:
+                return ("HOVER", cx, cy)
+            if (cb & 3) == 0:
+                return ("CLICK", cx, cy)
+            return ("HOVER", cx, cy)
+        except Exception:
+            pass
+
+    return "IGNORE"
+
+
+def get_win32_event():
+    global win_mouse_left_down
+
+    count = wintypes.DWORD()
+
+    if not kernel32.GetNumberOfConsoleInputEvents(hStdIn, ctypes.byref(count)):
+        time.sleep(0.01)
+        return None
+
+    if count.value == 0:
+        time.sleep(0.01)
+        return None
+
+    record = INPUT_RECORD()
+    read = wintypes.DWORD()
+
+    while count.value > 0:
+        if not kernel32.ReadConsoleInputW(hStdIn, ctypes.byref(record), 1, ctypes.byref(read)):
+            time.sleep(0.01)
+            return None
+
+        kernel32.GetNumberOfConsoleInputEvents(hStdIn, ctypes.byref(count))
+
+        if record.EventType == KEY_EVENT:
+            key = record.Event.KeyEvent
+            if not key.bKeyDown:
+                continue
+
+            vk = key.wVirtualKeyCode
+            ch = key.uChar
+            ctrl = key.dwControlKeyState & (LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED)
+
+            if ctrl and vk == VK_C:
+                raise KeyboardInterrupt
+            if vk == VK_ESCAPE:
+                return "ESC"
+            if vk == VK_RETURN:
+                return "ENTER"
+            if vk == VK_BACK:
+                return "BACKSPACE"
+            if vk == VK_UP:
+                return "UP"
+            if vk == VK_DOWN:
+                return "DOWN"
+
+            if ch and ch not in ("\x00", "\r", "\n", "\b", "\x1b"):
+                return ch
+
+        elif record.EventType == MOUSE_EVENT:
+            mouse = record.Event.MouseEvent
+            x = int(mouse.dwMousePosition.X) + 1
+            y = int(mouse.dwMousePosition.Y) + 1
+            flags = mouse.dwEventFlags
+            left_down = bool(mouse.dwButtonState & FROM_LEFT_1ST_BUTTON_PRESSED)
+
+            if flags == MOUSE_MOVED:
+                win_mouse_left_down = left_down
+                return ("HOVER", x, y)
+
+            if flags == 0:
+                if left_down and not win_mouse_left_down:
+                    win_mouse_left_down = True
+                    return ("CLICK", x, y)
+                if not left_down:
+                    win_mouse_left_down = False
+                    return "IGNORE"
+
+            if flags in (DOUBLE_CLICK, MOUSE_WHEELED, MOUSE_HWHEELED):
+                return "IGNORE"
+
+    return None
+
+
+def get_event():
+    global _input_queue
+
+    if sys.platform == "win32" and win32_available:
+        return get_win32_event()
+
+    if sys.platform == "win32":
+        import msvcrt
+
+        if msvcrt.kbhit():
+            ch = msvcrt.getwch()
+
+            if ch == "\x1b":
+                time.sleep(0.08)
+                seq = "\x1b"
+
+                while msvcrt.kbhit():
+                    seq += msvcrt.getwch()
+
+                if seq == "\x1b":
+                    return "ESC"
+
+                return parse_vt_sequence(seq)
+
+            if ch in ("\r", "\n"):
+                return "ENTER"
+
+            if ch == "\b":
+                return "BACKSPACE"
+
+            if ch == "\x03":
+                raise KeyboardInterrupt
+
+            if ch in ("\x00", "\xe0"):
+                if msvcrt.kbhit():
+                    ch2 = msvcrt.getwch()
+                    if ch2 == "H":
+                        return "UP"
+                    if ch2 == "P":
+                        return "DOWN"
+                    if ch2 == "K":
+                        return "LEFT"
+                    if ch2 == "M":
+                        return "RIGHT"
+                return "IGNORE"
+
+            return ch
+
+        time.sleep(0.01)
+        return None
+
+    import select
+
+    if not _input_queue:
+        r, _, _ = select.select([sys.stdin], [], [], 0.05)
+        if r:
+            try:
+                data = os.read(sys.stdin.fileno(), 4096).decode("utf-8", errors="replace")
+                _input_queue.extend(list(data))
+            except Exception:
+                pass
+
+    if not _input_queue:
+        return None
+
+    ch = _input_queue.pop(0)
+
+    if ch == "\x1b":
+        seq = "\x1b"
+
+        if not _input_queue:
+            r2, _, _ = select.select([sys.stdin], [], [], 0.18)
+            if r2:
+                try:
+                    data = os.read(sys.stdin.fileno(), 4096).decode("utf-8", errors="replace")
+                    _input_queue.extend(list(data))
+                except Exception:
+                    pass
+
+        if _input_queue and _input_queue[0] in ("[", "O", "]"):
+            seq += _input_queue.pop(0)
+
+            while True:
+                if not _input_queue:
+                    r3, _, _ = select.select([sys.stdin], [], [], 0.03)
+                    if r3:
+                        try:
+                            data = os.read(sys.stdin.fileno(), 4096).decode("utf-8", errors="replace")
+                            _input_queue.extend(list(data))
+                        except Exception:
+                            pass
+                    else:
+                        break
+
+                if _input_queue:
+                    next_ch = _input_queue.pop(0)
+                    seq += next_ch
+
+                    if next_ch in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz~Mm":
+                        break
+                else:
+                    break
+
+            if seq.startswith("\x1b[200~"):
+                pasted = []
+
+                while True:
+                    if not _input_queue:
+                        r4, _, _ = select.select([sys.stdin], [], [], 0.03)
+                        if r4:
+                            try:
+                                data = os.read(sys.stdin.fileno(), 4096).decode("utf-8", errors="replace")
+                                _input_queue.extend(list(data))
+                            except Exception:
+                                pass
+
+                    if not _input_queue:
+                        break
+
+                    c = _input_queue.pop(0)
+                    pasted.append(c)
+
+                    if "".join(pasted).endswith("\x1b[201~"):
+                        text = "".join(pasted)[:-6]
+                        _input_queue = list(text) + _input_queue
+                        return "IGNORE"
+
+            return parse_vt_sequence(seq)
+
+        return "ESC"
+
+    if ch in ("\n", "\r"):
+        return "ENTER"
+
+    if ch in ("\x7f", "\b"):
+        return "BACKSPACE"
+
+    if ch == "\x03":
+        raise KeyboardInterrupt
+
+    if ch == "\x04":
+        raise EOFError
+
+    return ch
+
+
+def show_floating_modal(title, items, bg_draw_func):
+    flush_input_events()
+
+    max_len = text_width(title) + 10
+
+    for item in items:
+        length = text_width(item["label"]) + (text_width(item.get("shortcut", "")) + 4 if item.get("shortcut") else 0)
+        max_len = max(max_len, length)
+
+    mw = min(80, max(40, max_len + 6))
+    mh = len(items) + 4
+
+    sys.stdout.write("\033[?1000h\033[?1002h\033[?1003h\033[?1015h\033[?1006h\033[?25l")
+    sys.stdout.flush()
+
+    try:
+        selectable = [i for i, it in enumerate(items) if it["type"] == "item"]
+
+        if not selectable:
+            return None
+
+        sel_pos = 0
+        last_size = (-1, -1)
+        force_redraw = True
+        sx = 1
+        sy = 1
+
+        def draw_dimmed_background():
+            try:
+                set_color_mode(True)
+                bg_draw_func()
+            finally:
+                set_color_mode(False)
+
+        def update_hover_selection(my):
+            nonlocal sel_pos, force_redraw
+            best_dist = 99999
+            best_idx = sel_pos
+
+            for i_sel, row_idx in enumerate(selectable):
+                item_y = sy + 2 + row_idx
+                dist = abs(my - item_y)
+
+                if dist < best_dist:
+                    best_dist = dist
+                    best_idx = i_sel
+
+            if best_idx != sel_pos:
+                sel_pos = best_idx
+                force_redraw = True
+
+        with RawInput():
+            while True:
+                tw = get_term_width()
+
+                th = get_term_size().lines
+
+                if (tw, th) != last_size:
+                    draw_dimmed_background()
+                    last_size = (tw, th)
+                    force_redraw = True
+
+                if force_redraw:
+                    sx = max(1, (tw - mw) // 2)
+                    sy = max(1, (th - mh) // 2)
+
+                    title_part = f"  {title}"
+                    esc_part = "esc  "
+                    spaces = " " * max(0, mw - text_width(title_part) - text_width(esc_part))
+
+                    sys.stdout.write(f"\033[{sy};{sx}H")
+                    sys.stdout.write(
+                        f"\033[48;2;30;30;30m"
+                        f"\033[38;2;210;210;210m{title_part}"
+                        f"{spaces}"
+                        f"\033[38;2;110;110;110m{esc_part}"
+                        f"\033[0m"
+                    )
+
+                    sys.stdout.write(f"\033[{sy + 1};{sx}H\033[48;2;30;30;30m{' ' * mw}\033[0m")
+
+                    for i, item in enumerate(items):
+                        sys.stdout.write(f"\033[{sy + 2 + i};{sx}H")
+                        is_sel = selectable[sel_pos] == i
+
+                        if item["type"] == "category":
+                            line = pad_text(f"  {item['label']}", mw)
+                            sys.stdout.write(
+                                f"\033[48;2;30;30;30m"
+                                f"\033[38;2;0;175;255m{line}"
+                                f"\033[0m"
+                            )
+                        else:
+                            bg = "\033[48;2;248;246;117m" if is_sel else "\033[48;2;30;30;30m"
+                            fg = "\033[38;2;0;0;0m" if is_sel else "\033[38;2;210;210;210m"
+                            s_fg = "\033[38;2;80;80;80m" if is_sel else "\033[38;2;110;110;110m"
+                            lbl = item["label"]
+                            sh = item.get("shortcut", "")
+                            sp = max(0, mw - text_width(lbl) - text_width(sh) - 4)
+
+                            sys.stdout.write(f"{bg}{fg}  {lbl}{' ' * sp}{s_fg}{sh}  \033[0m")
+
+                    sys.stdout.write(f"\033[{sy + 2 + len(items)};{sx}H\033[48;2;30;30;30m{' ' * mw}\033[0m")
+                    sys.stdout.write(f"\033[{sy + 3 + len(items)};{sx}H\033[48;2;30;30;30m{' ' * mw}\033[0m")
+                    sys.stdout.flush()
+                    force_redraw = False
+
+                ev = get_event()
+
+                if ev:
+                    if ev == "UP":
+                        sel_pos = (sel_pos - 1) % len(selectable)
+                        force_redraw = True
+                    elif ev == "DOWN":
+                        sel_pos = (sel_pos + 1) % len(selectable)
+                        force_redraw = True
+                    elif ev in ("LEFT", "RIGHT", "IGNORE"):
+                        continue
+                    elif ev == "ESC":
+                        return None
+                    elif ev == "ENTER":
+                        return items[selectable[sel_pos]]["id"]
+                    elif isinstance(ev, tuple):
+                        action, mx, my = ev
+
+                        if action == "HOVER":
+                            update_hover_selection(my)
+                        elif action == "CLICK":
+                            update_hover_selection(my)
+
+                            if sx <= mx < sx + mw and sy <= my < sy + mh:
+                                row = my - sy - 2
+
+                                if 0 <= row < len(items) and items[row]["type"] == "item":
+                                    return items[row]["id"]
+                            else:
+                                return None
+
+    finally:
+        sys.stdout.write("\033[?1006l\033[?1015l\033[?1003l\033[?1002l\033[?1000l\033[0m")
+        sys.stdout.flush()
+
 def settings_menu(config):
     while True:
         lang = config["lang"]
         translations = T[lang]
 
-        def render_settings():
-            clear_screen(22)
+        def draw_background():
+            clear_screen(20)
             draw_logo()
             _, width, margin = get_layout()
-            draw_header(margin, width, translations["settings"])
+            draw_header(
+                margin,
+                width,
+                translations["commands"]
+            )
 
+            print(
+                f"{margin}{C_BLUE}"
+                f"{translations['actions']}"
+                f"{C_RESET}"
+            )
             draw_menu_item(
                 margin,
                 "1",
-                translations["change_path"]
+                translations["start"]
             )
             draw_menu_item(
                 margin,
                 "2",
-                translations["change_colors"]
-            )
-            draw_menu_item(
-                margin,
-                "3",
-                translations["change_detail"]
-            )
-            draw_menu_item(
-                margin,
-                "4",
-                translations["change_background"]
-            )
-            draw_menu_item(
-                margin,
-                "5",
-                translations["change_language"]
+                translations["settings"]
             )
             draw_menu_item(
                 margin,
                 "0",
-                translations["back"]
+                translations["exit"]
             )
-
             print()
+
+            print(
+                f"{margin}{C_BLUE}"
+                f"{translations['system']}"
+                f"{C_RESET}"
+            )
             draw_sys_item(
                 margin,
                 width,
@@ -1541,22 +2155,83 @@ def settings_menu(config):
                     config["background"]
                 )
             )
+            print_tip(
+                translations["tip_main"],
+                margin,
+                width
+            )
 
-        render_settings()
-        choice = ask(
-            translations["action"],
-            redraw=render_settings
+        settings_items = [
+            {
+                "type": "category",
+                "label": translations["settings"]
+            },
+            {
+                "type": "item",
+                "id": "path",
+                "label": translations["change_path"],
+                "shortcut": truncate_text(config["output"], 24)
+            },
+            {
+                "type": "item",
+                "id": "colors",
+                "label": translations["change_colors"],
+                "shortcut": str(config["colors"])
+            },
+            {
+                "type": "item",
+                "id": "detail",
+                "label": translations["change_detail"],
+                "shortcut": str(config["detail"])
+            },
+            {
+                "type": "item",
+                "id": "background",
+                "label": translations["change_background"],
+                "shortcut": translations.get(
+                    config["background"],
+                    config["background"]
+                )
+            },
+            {
+                "type": "item",
+                "id": "language",
+                "label": translations["change_language"],
+                "shortcut": {
+                    "en": "English",
+                    "ru": "Русский",
+                    "zh": "中文"
+                }.get(lang, lang)
+            }
+        ]
+
+        choice = show_floating_modal(
+            translations["settings"],
+            settings_items,
+            draw_background
         )
 
-        if choice == "0":
+        if choice is None:
             save_config(config)
             return
 
-        if choice == "1":
+        def draw_setting_input():
+            clear_screen(14)
+            draw_logo()
+            _, width, margin = get_layout()
+            draw_header(
+                margin,
+                width,
+                translations["settings"]
+            )
+            print()
+
+        if choice == "path":
+            draw_setting_input()
             value = clean_path(
                 ask(
                     translations["new_path"],
-                    redraw=render_settings
+                    redraw=draw_setting_input
                 )
             )
 
@@ -1567,10 +2242,11 @@ def settings_menu(config):
                 except Exception:
                     pass
 
-        elif choice == "2":
+        elif choice == "colors":
+            draw_setting_input()
             value = ask(
                 translations["new_colors"],
-                redraw=render_settings
+                redraw=draw_setting_input
             )
 
             try:
@@ -1581,10 +2257,11 @@ def settings_menu(config):
             except Exception:
                 pass
 
-        elif choice == "3":
+        elif choice == "detail":
+            draw_setting_input()
             value = ask(
                 translations["new_detail"],
-                redraw=render_settings
+                redraw=draw_setting_input
             )
 
             try:
@@ -1595,36 +2272,47 @@ def settings_menu(config):
             except Exception:
                 pass
 
-        elif choice == "4":
+        elif choice == "background":
             modes = ["auto", "on", "off"]
             current = modes.index(config["background"])
             config["background"] = modes[
                 (current + 1) % len(modes)
             ]
 
-        elif choice == "5":
-            def render_language():
-                clear_screen(14)
-                draw_logo()
-                _, width, margin = get_layout()
-                draw_header(
-                    margin,
-                    width,
-                    translations["language"]
-                )
-                draw_menu_item(margin, "1", "English")
-                draw_menu_item(margin, "2", "Русский")
-                draw_menu_item(margin, "3", "中文")
+        elif choice == "language":
+            language_items = [
+                {
+                    "type": "category",
+                    "label": translations["language"]
+                },
+                {
+                    "type": "item",
+                    "id": "en",
+                    "label": "English",
+                    "shortcut": "✓" if lang == "en" else ""
+                },
+                {
+                    "type": "item",
+                    "id": "ru",
+                    "label": "Русский",
+                    "shortcut": "✓" if lang == "ru" else ""
+                },
+                {
+                    "type": "item",
+                    "id": "zh",
+                    "label": "中文",
+                    "shortcut": "✓" if lang == "zh" else ""
+                }
+            ]
 
-            render_language()
-            selected = ask(
-                translations["action"],
-                redraw=render_language
+            selected_language = show_floating_modal(
+                translations["language"],
+                language_items,
+                draw_background
             )
-            mapping = {"1": "en", "2": "ru", "3": "zh"}
 
-            if selected in mapping:
-                config["lang"] = mapping[selected]
+            if selected_language in T:
+                config["lang"] = selected_language
 
         save_config(config)
 
