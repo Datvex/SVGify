@@ -11,17 +11,12 @@ import argparse
 import urllib.parse
 import unicodedata
 import textwrap
-import xml.etree.ElementTree as ET
 from pathlib import Path
 from collections import deque, defaultdict
+from typing import Any, cast
 from xml.sax.saxutils import escape
 
 from PIL import Image, ImageOps, ImageFilter
-
-try:
-    import vtracer
-except ImportError:
-    vtracer = None
 
 C_BLUE = "\033[38;2;0;175;255m"
 C_YELLOW = "\033[38;2;248;246;117m"
@@ -1030,11 +1025,19 @@ def remove_connected_background(image, tolerance):
     image = image.convert("RGBA")
     width, height = image.size
     pixels = image.load()
+
+    if pixels is None:
+        raise RuntimeError("Unable to access image pixels")
+
     background, spread = estimate_background(image)
     threshold = max(float(tolerance), min(72.0, spread * 2.8 + 12.0))
     visited = bytearray(width * height)
     mask = Image.new("L", (width, height), 255)
     mask_pixels = mask.load()
+
+    if mask_pixels is None:
+        raise RuntimeError("Unable to access background mask pixels")
+
     queue = deque()
 
     def add(x, y):
@@ -1083,6 +1086,9 @@ def remove_connected_background(image, tolerance):
     final_alpha = Image.new("L", (width, height), 0)
     final_pixels = final_alpha.load()
 
+    if original_pixels is None or mask_pixels is None or final_pixels is None:
+        raise RuntimeError("Unable to access alpha mask pixels")
+
     for y in range(height):
         for x in range(width):
             final_pixels[x, y] = min(
@@ -1114,42 +1120,129 @@ def prepare_image(image, background_mode, tolerance):
     return remove_connected_background(image, tolerance)
 
 
+def palette_color(palette, index):
+    offset = int(index) * 3
+
+    if offset + 2 >= len(palette):
+        return (0, 0, 0)
+
+    return (
+        int(palette[offset]),
+        int(palette[offset + 1]),
+        int(palette[offset + 2])
+    )
+
+
+def analyze_logo_palette(image, colors):
+    """Find a compact, noise-resistant palette for flat artwork."""
+    rgba = image.convert("RGBA")
+    alpha = rgba.getchannel("A")
+    rgb = Image.new("RGB", rgba.size, (255, 255, 255))
+    opaque_mask = alpha.point(lambda value: 255 if value >= 128 else 0)
+    rgb.paste(rgba.convert("RGB"), mask=opaque_mask)
+
+    visible_box = opaque_mask.getbbox()
+
+    if visible_box:
+        probe = rgb.crop(visible_box)
+    else:
+        probe = rgb
+
+    probe.thumbnail((512, 512), Image.Resampling.LANCZOS)
+    requested = max(1, min(64, int(colors)))
+    probe_colors = max(8, min(64, requested * 3))
+
+    quantized = probe.quantize(
+        colors=probe_colors,
+        method=Image.Quantize.MEDIANCUT,
+        kmeans=1,
+        dither=Image.Dither.NONE
+    )
+    raw_palette = cast(list[int], quantized.getpalette() or [])
+    usage = cast(
+        list[tuple[int, int]],
+        quantized.getcolors(maxcolors=256) or []
+    )
+    usage.sort(reverse=True)
+
+    if not usage:
+        return [(0, 0, 0)]
+
+    total = max(1, sum(count for count, _ in usage))
+    entries = [
+        (count, palette_color(raw_palette, index))
+        for count, index in usage
+    ]
+
+    first_share = entries[0][0] / total
+    top_two_share = sum(count for count, _ in entries[:2]) / total
+
+    if first_share >= 0.992:
+        target = 1
+    elif (
+        len(entries) >= 2
+        and top_two_share >= 0.965
+        and color_distance(entries[0][1], entries[1][1]) >= 36
+    ):
+        target = 2
+    else:
+        target = requested
+
+    minimum_share = min(0.001, max(0.00005, 2.0 / total))
+    selected = []
+
+    for count, color in entries:
+        if len(selected) >= target:
+            break
+
+        if selected and count / total < minimum_share:
+            continue
+
+        if any(color_distance(color, other) < 12 for other in selected):
+            continue
+
+        selected.append(color)
+
+    for _, color in entries:
+        if len(selected) >= target:
+            break
+
+        if not any(color_distance(color, other) < 8 for other in selected):
+            selected.append(color)
+
+    return selected or [entries[0][1]]
+
+
+def make_palette_image(colors):
+    palette_image = Image.new("P", (1, 1))
+    values = []
+
+    for color in colors[:256]:
+        values.extend((int(color[0]), int(color[1]), int(color[2])))
+
+    values.extend([0] * (768 - len(values)))
+    palette_image.putpalette(values)
+    return palette_image
+
+
 def quantize_image(image, colors):
     rgba = image.convert("RGBA")
     alpha = rgba.getchannel("A")
     white = Image.new("RGB", rgba.size, (255, 255, 255))
     white.paste(rgba.convert("RGB"), mask=alpha)
-
-    try:
-        quantized = white.quantize(
-            colors=max(2, min(64, int(colors))),
-            method=Image.Quantize.FASTOCTREE,
-            dither=Image.Dither.NONE
-        )
-    except AttributeError:
-        quantized = white.quantize(
-            colors=max(2, min(64, int(colors))),
-            method=2,
-            dither=0
-        )
-
-    palette = quantized.getpalette() or []
-    used = quantized.getcolors(maxcolors=256) or []
-    used.sort(reverse=True)
-
-    colors_by_index = {}
-
-    for _, index in used:
-        offset = index * 3
-
-        if offset + 2 < len(palette):
-            colors_by_index[index] = (
-                palette[offset],
-                palette[offset + 1],
-                palette[offset + 2]
-            )
-
+    selected = analyze_logo_palette(rgba, colors)
+    palette_image = make_palette_image(selected)
+    quantized = white.quantize(
+        palette=palette_image,
+        dither=Image.Dither.NONE
+    )
+    colors_by_index = {
+        index: color
+        for index, color in enumerate(selected)
+    }
     return quantized, alpha, colors_by_index
+
+
 
 
 def direction(first, second):
@@ -1404,6 +1497,46 @@ def rgb_hex(color):
     return "#{:02x}{:02x}{:02x}".format(*color)
 
 
+def detect_background_index(indices, alpha, width, height):
+    """Return a solid edge-connected canvas color, if one is present."""
+    index_pixels = indices.load()
+    alpha_pixels = alpha.load()
+
+    if index_pixels is None or alpha_pixels is None:
+        return None
+
+    counts = defaultdict(int)
+    visible = 0
+    sampled = 0
+    step = max(1, (width * 2 + height * 2) // 4096)
+
+    def sample(x, y):
+        nonlocal visible, sampled
+        sampled += 1
+
+        if alpha_pixels[x, y] >= 224:
+            visible += 1
+            counts[int(index_pixels[x, y])] += 1
+
+    for x in range(0, width, step):
+        sample(x, 0)
+
+        if height > 1:
+            sample(x, height - 1)
+
+    for y in range(0, height, step):
+        sample(0, y)
+
+        if width > 1:
+            sample(width - 1, y)
+
+    if not counts or visible < sampled * 0.6:
+        return None
+
+    index, count = max(counts.items(), key=lambda item: item[1])
+    return index if count >= visible * 0.8 else None
+
+
 def build_svg(image, original_width, original_height, config, title):
     width, height = image.size
     quantized, alpha, palette = quantize_image(
@@ -1413,15 +1546,33 @@ def build_svg(image, original_width, original_height, config, title):
     scale_x = original_width / float(width)
     scale_y = original_height / float(height)
     detail = max(1, min(100, int(config["detail"])))
-    tolerance = 0.15 + (100 - detail) * 0.035
+    tolerance = min(8.0, 0.5 + (100 - detail) * 0.08)
     minimum_area = max(0.1, float(config["min_area"]))
     shapes = []
 
-    usage = quantized.getcolors(maxcolors=256) or []
+    usage = cast(
+        list[tuple[int, int]],
+        quantized.getcolors(maxcolors=256) or []
+    )
     usage.sort(reverse=True)
+    background_index = detect_background_index(
+        quantized,
+        alpha,
+        width,
+        height
+    )
+
+    if (
+        background_index in palette
+        and config["background"] == "off"
+    ):
+        shapes.append(
+            f'<rect width="{original_width}" height="{original_height}" '
+            f'fill="{rgb_hex(palette[background_index])}"/>'
+        )
 
     for count, index in usage:
-        if index not in palette:
+        if index not in palette or index == background_index:
             continue
 
         if count < minimum_area:
@@ -1451,6 +1602,7 @@ def build_svg(image, original_width, original_height, config, title):
                 continue
 
             loop = simplify_closed(loop, tolerance)
+            loop = remove_collinear(loop)
 
             if len(loop) < 3:
                 continue
@@ -1478,107 +1630,17 @@ def build_svg(image, original_width, original_height, config, title):
         f'<svg xmlns="http://www.w3.org/2000/svg" '
         f'width="{original_width}" height="{original_height}" '
         f'viewBox="0 0 {original_width} {original_height}" '
-        f'role="img" aria-label="{safe_title}">\n'
+        f'role="img" aria-label="{safe_title}" '
+        f'shape-rendering="geometricPrecision">\n'
         f'  <title>{safe_title}</title>\n'
         f'  {content}\n'
         '</svg>\n'
     )
 
 
-def analyze_vector_profile(image, config):
-    """Choose high-quality VTracer settings from the actual image content."""
-    sample = image.copy()
-    sample.thumbnail((320, 320), Image.Resampling.LANCZOS)
-    rgba = sample.convert("RGBA")
-    alpha = rgba.getchannel("A")
-    rgb = Image.new("RGB", rgba.size, (255, 255, 255))
-    rgb.paste(rgba.convert("RGB"), mask=alpha)
-
-    try:
-        reduced = rgb.quantize(
-            colors=32,
-            method=Image.Quantize.FASTOCTREE,
-            dither=Image.Dither.NONE
-        )
-    except AttributeError:
-        reduced = rgb.quantize(colors=32, method=2, dither=0)
-
-    total = max(1, rgb.width * rgb.height)
-    significant = [
-        count
-        for count, _ in (reduced.getcolors(maxcolors=256) or [])
-        if count / total >= 0.002
-    ]
-    significant_colors = max(1, len(significant))
-    flat_logo = significant_colors <= max(6, min(16, int(config["colors"])))
-    detail = max(1, min(100, int(config["detail"])))
-
-    if flat_logo:
-        # Preserve hard corners and long straight logo edges. VTracer's spline
-        # fitter removes the pixel staircase while this profile avoids rounding
-        # intentional geometric corners.
-        return {
-            "colormode": "color",
-            "hierarchical": "stacked",
-            "mode": "spline",
-            "filter_speckle": max(0, min(16, int(round(config["min_area"] / 2)))),
-            "color_precision": 8,
-            "layer_difference": 4,
-            "corner_threshold": max(18, min(55, round(58 - detail * 0.38))),
-            "length_threshold": max(3.5, min(7.5, 7.5 - detail * 0.04)),
-            "max_iterations": 16,
-            "splice_threshold": max(12, min(50, round(62 - detail * 0.48))),
-            "path_precision": 5,
-        }
-
-    # Illustrations and shaded images need gentler clustering and smoother
-    # curves to avoid thousands of tiny paths.
-    return {
-        "colormode": "color",
-        "hierarchical": "stacked",
-        "mode": "spline",
-        "filter_speckle": max(2, min(16, int(round(config["min_area"] / 2)))),
-        "color_precision": max(5, min(8, round(5 + config["colors"] / 24))),
-        "layer_difference": max(8, min(32, round(34 - config["colors"] * 0.4))),
-        "corner_threshold": max(35, min(75, round(78 - detail * 0.3))),
-        "length_threshold": max(3.5, min(8.0, 8.0 - detail * 0.04)),
-        "max_iterations": 12,
-        "splice_threshold": max(20, min(60, round(68 - detail * 0.4))),
-        "path_precision": 4,
-    }
-
-
-def finalize_vtracer_svg(svg_path, original_width, original_height, title):
-    """Restore original dimensions and add accessible SVG metadata."""
-    tree = ET.parse(svg_path)
-    root = tree.getroot()
-    namespace = ""
-
-    if root.tag.startswith("{"):
-        namespace = root.tag.split("}", 1)[0][1:]
-
-    root.set("width", str(original_width))
-    root.set("height", str(original_height))
-    root.set("role", "img")
-    root.set("aria-label", title)
-
-    title_tag = f"{{{namespace}}}title" if namespace else "title"
-    existing_title = root.find(title_tag)
-
-    if existing_title is None:
-        existing_title = ET.Element(title_tag)
-        root.insert(0, existing_title)
-
-    existing_title.text = title
-    tree.write(svg_path, encoding="utf-8", xml_declaration=True)
 
 
 def vectorize_file(source, output_dir, config):
-    if vtracer is None:
-        raise RuntimeError(
-            "VTracer is not installed. Run: pip install -r requirements.txt"
-        )
-
     output_path = unique_output_path(
         os.path.join(output_dir, f"{Path(source).stem}.svg")
     )
@@ -1586,50 +1648,32 @@ def vectorize_file(source, output_dir, config):
     image = load_image(source)
     original_width, original_height = image.size
     image, _, _ = resize_for_processing(image, int(config["max_size"]))
-    image = prepare_image(
+    svg = build_svg(
         image,
-        config["background"],
-        int(config["background_tolerance"])
+        original_width,
+        original_height,
+        config,
+        Path(source).stem
     )
-    profile = analyze_vector_profile(image, config)
 
-    temporary_png = tempfile.NamedTemporaryFile(
-        prefix="svgify_vtracer_",
-        suffix=".png",
-        delete=False
-    )
-    temporary_path = temporary_png.name
-    temporary_png.close()
+    temporary_path = f"{output_path}.tmp"
 
     try:
-        # PNG keeps alpha and edge coverage intact. No JPEG stage and no
-        # pre-quantization are used, so VTracer can recover subpixel edges.
-        image.save(temporary_path, format="PNG", optimize=False)
-        vtracer.convert_image_to_svg_py(
-            temporary_path,
-            output_path,
-            **profile
-        )
-        finalize_vtracer_svg(
-            output_path,
-            original_width,
-            original_height,
-            Path(source).stem
-        )
+        with open(temporary_path, "w", encoding="utf-8", newline="\n") as file:
+            file.write(svg)
+
+        os.replace(temporary_path, output_path)
     except Exception:
         try:
-            if os.path.exists(output_path):
-                os.remove(output_path)
+            if os.path.exists(temporary_path):
+                os.remove(temporary_path)
         except Exception:
             pass
         raise
-    finally:
-        try:
-            os.remove(temporary_path)
-        except Exception:
-            pass
 
     return output_path
+
+
 
 
 def draw_progress(lang, index, total, name):
